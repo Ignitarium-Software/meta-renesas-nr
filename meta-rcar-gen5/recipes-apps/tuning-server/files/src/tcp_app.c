@@ -10,29 +10,29 @@
 int init_tcp_client(void)
 {
 	int status, client_fd;
-    struct sockaddr_in serv_addr;
-    if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        printf("\n Socket creation error \n");
-        return -1;
-    }
+	struct sockaddr_in serv_addr;
+	if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+		printf("\n Socket creation error \n");
+		return -1;
+	}
 
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(PORT);
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_port = htons(PORT);
 
-    /* Convert IPv4 and IPv6 addresses from text to binary form */
-    if (inet_pton(AF_INET, SERVER_IP, &serv_addr.sin_addr) <= 0) {
-        printf("Invalid address/ Address not supported \n");
-        return -1;
-    }
+	/* Convert IPv4 and IPv6 addresses from text to binary form */
+	if (inet_pton(AF_INET, SERVER_IP, &serv_addr.sin_addr) <= 0) {
+		printf("Invalid address/ Address not supported \n");
+		return -1;
+	}
 
-    if ((status = connect(client_fd, (struct sockaddr*)&serv_addr,
-                   sizeof(serv_addr))) < 0) {
-        printf("\nConnection Failed \n");
-        return -1;
-    }
+	if ((status = connect(client_fd, (struct sockaddr*)&serv_addr,
+				   sizeof(serv_addr))) < 0) {
+		printf("\nConnection Failed \n");
+		return -1;
+	}
 
 	printf("Connected to server\n");
 
-    return client_fd;
+	return client_fd;
 }
 
