@@ -1,0 +1,13 @@
+[Unit]
+Description=Remoteproc Startup Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/remoteproc_script
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
