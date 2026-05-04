@@ -3,10 +3,9 @@ Description=Remoteproc Startup Service
 After=network.target
 
 [Service]
-Type=simple
+Type=oneshot
 ExecStart=/usr/bin/remoteproc_script
-Restart=always
-RestartSec=5
+RemainAfterExit=yes
 User=root
 
 [Install]

@@ -3,10 +3,10 @@ Description=Tuning App Startup Service
 After=remoteproc.service
 
 [Service]
-Type=simple
+Type=oneshot
 ExecStart=/usr/bin/tuning_server
 Restart=always
-RestartSec=5
+RemainAfterExit=yes
 User=root
 
 [Install]
