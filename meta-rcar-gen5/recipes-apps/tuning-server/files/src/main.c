@@ -25,6 +25,7 @@ int get_endpoint_info(int *dst_addr);
 
 static void on_sigint(int signo)
 {
+	printf("Recevied ^C interrupt\n");
 	stop_flag = 1;
 }
 
@@ -61,7 +62,7 @@ int main()
 {
 	struct rpmsg_endpoint_info eptinfo;
 	char dev_name[32];
-	int ret, ep_dst, client_fd, ctrl_fd;
+	int ret, ep_dst, client_socket, ctrl_fd;
 	pthread_t awe_resp_tid;
 
 	/* initialize semaphore */
@@ -72,8 +73,8 @@ int main()
 		return -1;
 	}
 
-	client_fd = init_tcp_client();
-	if (client_fd < 0 ) {
+	client_socket = init_tcp_server();
+	if (client_socket < 0 ) {
 		printf("Failed to setup socket\n");
 		return -1;
 	}
@@ -122,7 +123,7 @@ int main()
 	}
 
 	do {
-		int buflen = read(client_fd, ip_buffer, AWE_MAX_PKT_LEN);
+		int buflen = read(client_socket, ip_buffer, AWE_MAX_PKT_LEN);
 		if (buflen <= 0 ) {
 			perror("failed to read data\n");
 			break;
@@ -139,7 +140,7 @@ int main()
 		sem_wait(&awe_sem);
 
 		/* send response back to tcp server */
-		buflen = send_response(client_fd);
+		buflen = send_response(client_socket);
 		if (buflen <= 0) {
 			perror("failed to send data to server");
 			break;
@@ -152,6 +153,7 @@ int main()
 	printf("\nExiting the application");
 	close(tun_ept_fd);
 	close(ctrl_fd);
+	close(client_socket);
 
 	return 0;
 }
