@@ -20,10 +20,10 @@ uint8_t resp_buffer[RPMSG_PKT_LEN];
 int tun_ept_fd;
 sem_t awe_sem;
 
-int init_tcp_client(void);
+int init_tcp_server(int *server_fd);
 int get_endpoint_info(int *dst_addr);
 
-static void on_sigint(int signo)
+static void sig_handler(int signo)
 {
 	printf("Recevied ^C interrupt\n");
 	stop_flag = 1;
@@ -39,7 +39,7 @@ void* awe_resp_thread(void* arg)
 		do {
 			int rlen = read(tun_ept_fd, resp_buffer, RPMSG_PKT_LEN);
 		  	if (rlen <= 0) {
-				printf("Failed to receive message");
+				perror("Failed to receive message");
 				break;
 			}
 			else
@@ -62,18 +62,32 @@ int main()
 {
 	struct rpmsg_endpoint_info eptinfo;
 	char dev_name[32];
-	int ret, ep_dst, client_socket, ctrl_fd;
+	int ret, ep_dst, client_socket, ctrl_fd, server_fd;
 	pthread_t awe_resp_tid;
 
 	/* initialize semaphore */
 	sem_init(&awe_sem, 0, 0);
 
-	if (signal(SIGINT, on_sigint) == SIG_ERR) {
-		printf("Failed to set sigint\n");
+	struct sigaction sa = {0};
+
+	sa.sa_handler = sig_handler;
+	sigemptyset(&sa.sa_mask);
+	/* IMPORTANT: no SA_RESTART */
+	sa.sa_flags = 0;
+
+	if (sigaction(SIGINT, &sa, NULL) == -1) {
+		perror("SIGINT sigaction");
 		return -1;
 	}
 
-	client_socket = init_tcp_server();
+	if (sigaction(SIGTERM, &sa, NULL) == -1) {
+		perror("SIGTERM sigaction");
+		return -1;
+	}
+
+	printf("Initializing the tcp server\n");
+
+	client_socket = init_tcp_server(&server_fd);
 	if (client_socket < 0 ) {
 		printf("Failed to setup socket\n");
 		return -1;
@@ -125,7 +139,7 @@ int main()
 	do {
 		int buflen = read(client_socket, ip_buffer, AWE_MAX_PKT_LEN);
 		if (buflen <= 0 ) {
-			perror("failed to read data\n");
+			perror("failed to read data");
 			break;
 		}
 		
@@ -148,12 +162,13 @@ int main()
 
 	} while (stop_flag == 0);
 
-	stop_flag = 0;
-
-	printf("\nExiting the application");
+	/* Close all file descriptor */
 	close(tun_ept_fd);
 	close(ctrl_fd);
 	close(client_socket);
+	close(server_fd);
+
+	printf("Exiting the application\n");
 
 	return 0;
 }
