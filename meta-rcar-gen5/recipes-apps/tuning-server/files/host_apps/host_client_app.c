@@ -1,4 +1,5 @@
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,15 +20,13 @@ static void init_buffer(void)
 
 int main(int argc, char const* argv[])
 {
+	init_buffer();
+#if 0
     int server_fd, new_socket;
     ssize_t bytes_read;
     struct sockaddr_in address;
     int opt = 1;
     socklen_t addrlen = sizeof(address);
-    char buffer[1024] = { 0 };
-    char* hello = "Hello from server";
-
-	init_buffer();
 
     // Creating socket file descriptor
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -64,6 +63,38 @@ int main(int argc, char const* argv[])
         perror("accept");
         exit(EXIT_FAILURE);
     }
+#else
+
+	#define PORT 8080
+	#define SERVER_IP "192.168.0.120"
+
+    ssize_t bytes_read;
+	int status, new_socket;
+    struct sockaddr_in serv_addr;
+    if ((new_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        printf("\n Socket creation error \n");
+        return -1;
+    }
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(PORT);
+
+    /* Convert IPv4 and IPv6 addresses from text to binary form */
+    if (inet_pton(AF_INET, SERVER_IP, &serv_addr.sin_addr) <= 0) {
+        printf("Invalid address/ Address not supported \n");
+        return -1;
+    }
+
+    if ((status = connect(new_socket, (struct sockaddr*)&serv_addr,
+                   sizeof(serv_addr))) < 0) {
+        printf("\nConnection Failed \n");
+        return -1;
+    }
+
+    printf("Connected to server\n");
+
+
+#endif
 
 	const int len[] = {127, 255, 511, 767, 1056};
 	int loop = 0;
@@ -105,6 +136,6 @@ int main(int argc, char const* argv[])
     close(new_socket);
   
     /* closing the listening socket */
-    close(server_fd);
+    //close(server_fd);
     return 0;
 }
