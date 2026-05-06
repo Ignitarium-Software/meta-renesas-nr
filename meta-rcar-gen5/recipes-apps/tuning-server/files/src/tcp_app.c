@@ -3,25 +3,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 
 #define PORT 8080
 #define SERVER_IP "192.168.0.20"
 
-int init_tcp_server(void)
+int init_tcp_server(int *server_fd)
 {
-	int server_fd, new_socket;
-    struct sockaddr_in address;
-    int opt = 1;
+	int new_socket, opt = 1;
+    struct sockaddr_in address = {0};
+	char client_ip[INET_ADDRSTRLEN];
     socklen_t addrlen = sizeof(address);
 
     /* Creating socket file descriptor */
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    if ((*server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket failed");
 		return -1;
     }
 
     /* Forcefully attaching socket to the port */
-    if (setsockopt(server_fd, SOL_SOCKET,
+    if (setsockopt(*server_fd, SOL_SOCKET,
                    SO_REUSEADDR | SO_REUSEPORT, &opt,
                    sizeof(opt))) {
         perror("setsockopt");
@@ -32,28 +33,26 @@ int init_tcp_server(void)
     address.sin_port = htons(PORT);
 
     /* Forcefully attaching socket to the port */
-    if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+    if (bind(*server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
         perror("bind failed");
 		return -1;
     }
-    if (listen(server_fd, 3) < 0) {
+
+    if (listen(*server_fd, 3) < 0) {
         perror("listen");
 		return -1;
     }
-    if ((new_socket = accept(server_fd, (struct sockaddr*)&address, &addrlen)) < 0) {
+
+	printf("Start the client application...\n");
+
+    if ((new_socket = accept(*server_fd, (struct sockaddr*)&address, &addrlen)) < 0) {
         perror("accept");
 		return -1;
     }
 
-	printf("Connected to client\n");
+    inet_ntop(AF_INET, &address.sin_addr, client_ip, INET_ADDRSTRLEN);
 
-	char client_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &address.sin_addr,
-              client_ip, INET_ADDRSTRLEN);
-
-    printf("Client connected!\n");
-    printf("IP: %s\n", client_ip);
-    printf("Port: %d\n", ntohs(address.sin_port));
+    printf("Client connected, IP: %s\n", client_ip);
 
 	return new_socket;
 }
