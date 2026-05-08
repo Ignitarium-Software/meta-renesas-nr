@@ -21,7 +21,7 @@ int tun_ept_fd;
 sem_t awe_sem;
 
 int init_tcp_server(int *server_fd);
-int get_endpoint_info(int *dst_addr);
+int get_endpoint_info(int *src_addr, int *dst_addr);
 
 static void sig_handler(int signo)
 {
@@ -62,7 +62,7 @@ int main()
 {
 	struct rpmsg_endpoint_info eptinfo;
 	char dev_name[32];
-	int ret, ep_dst, client_socket, ctrl_fd, server_fd;
+	int ret, ep_src, ep_dst, client_socket, ctrl_fd, server_fd;
 	pthread_t awe_resp_tid;
 
 	/* initialize semaphore */
@@ -100,7 +100,7 @@ int main()
 		return -1;
 	}
 
-	if (get_endpoint_info(&ep_dst) != 0) {
+	if (get_endpoint_info(&ep_src, &ep_dst) != 0) {
 		printf("Failed to get endpoint info\n");
 		close(ctrl_fd);
 		return -1;
@@ -108,7 +108,7 @@ int main()
 
 	memset(&eptinfo, 0, sizeof(eptinfo));
 	strncpy(eptinfo.name, RPMSG_SERVICE_NAME, sizeof(eptinfo.name));
-	eptinfo.src = 1024;
+	eptinfo.src = ep_src;
 	eptinfo.dst = ep_dst;
 
 	ret = ioctl(ctrl_fd, RPMSG_CREATE_EPT_IOCTL, &eptinfo);

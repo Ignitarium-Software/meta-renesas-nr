@@ -6,7 +6,7 @@
 #define RPMSG_SYSFS_PATH "/sys/bus/rpmsg/devices/"
 #define RPMSG_EP_SERVICE "virtio0.rpmsg-client-sample"
 
-int get_endpoint_info(int *dst_addr)
+int get_endpoint_info(int *dst_src, int *dst_addr)
 {
 	DIR *dp;
 	struct dirent *entry;
@@ -67,6 +67,41 @@ int get_endpoint_info(int *dst_addr)
 			}
 
 			*dst_addr = dst_value;
+
+			/* Build src file path */
+			snprintf(dst_path, sizeof(dst_path),
+					 "%s/src", device_path);
+
+			printf("Opening: %s\n", dst_path);
+			fp = fopen(dst_path, "r");
+			if (!fp) {
+				perror("fopen failed");
+				closedir(dp);
+				return 1;
+			}
+
+			if (fgets(buffer, sizeof(buffer), fp) == NULL) {
+				perror("fgets failed");
+				fclose(fp);
+				closedir(dp);
+				return 1;
+			}
+
+			fclose(fp);
+
+			/* Remove newline if present */
+			buffer[strcspn(buffer, "\n")] = 0;
+
+			/* Convert to integer safely */
+			dst_value = strtol(buffer, &endptr, 0);
+
+			if (endptr == buffer) {
+				printf("Invalid number in src: %s\n", buffer);
+				closedir(dp);
+				return 1;
+			}
+
+			*dst_src = dst_value;
 
 			closedir(dp);
 			return 0;
