@@ -11,7 +11,7 @@
 #include "tuning_server.h"
 
 #define CTRL_DEV "/dev/rpmsg_ctrl0"
-#define RPMSG_SERVICE_NAME "rpmsg-client-sample"
+#define RPMSG_SERVICE_NAME "tuning_ep"
 
 static volatile sig_atomic_t stop_flag = 0;
 
