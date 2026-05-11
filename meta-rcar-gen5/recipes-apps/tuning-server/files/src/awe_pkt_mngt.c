@@ -53,27 +53,28 @@ int send_awe_pkts_fully(int rpmsg_fd, uint8_t *buffer, int len)
 		rp_hdr.chunk_len = chunk_size;
 
 		rp_hdr.flags = 0;
-		if (offset == 0)
+		if (offset == 0) {
 			rp_hdr.flags |= FLAG_SOF_MSK;
-		if (offset + chunk_size >= len)
+		}
+		if (offset + chunk_size >= len) {
 			rp_hdr.flags |= FLAG_EOF_MSK;
+		}
 
 		memcpy(rp_packet, &rp_hdr, sizeof(DspBridgeHdr));
 		memcpy((rp_packet + sizeof(DspBridgeHdr)), (buffer + offset), chunk_size);
 
 #ifdef DEBUG_PRINT
 		printf("-------------Chunk size : %d, offset : %d\n", chunk_size, offset);
-		for(int i = 0; i < chunk_size; i++)
+		for(int i = 0; i < chunk_size; i++) {
 			printf("%x ", buffer[i]);
+		}
 		printf("\n **************************************\n");
 #endif
-
 		ret = write(rpmsg_fd, rp_packet, RPMSG_PKT_LEN);
 		if (ret < 0) {
 			perror("RPMsg write failed");
 			break;
 		}
-
 		offset += chunk_size;
 	}
 
@@ -82,8 +83,7 @@ int send_awe_pkts_fully(int rpmsg_fd, uint8_t *buffer, int len)
 
 bool aggregate_awe_pkts(uint8_t *buf, uint32_t len)
 {
-	if (buf == NULL || len == 0U)
-	{
+	if (buf == NULL || len == 0U) {
 		printf("Invalid parameters\n");
 		return false;
 	}
@@ -91,8 +91,7 @@ bool aggregate_awe_pkts(uint8_t *buf, uint32_t len)
 	DspBridgeHdr *hdr = (DspBridgeHdr *)buf;
 	uint8_t *payload = (uint8_t *)buf + sizeof(DspBridgeHdr);
 
-	if (hdr->type !=  PKT_TYPE_AWE_DATA)
-	{
+	if (hdr->type !=  PKT_TYPE_AWE_DATA) {
 		printf("Incorrect packet header\n");
 		printf("Type : %d, chunk_id = %d, chunk_len = %d, flags = %d\n", hdr->type, hdr->chunk_id, hdr->chunk_len, hdr->flags);
 		return false;
@@ -101,8 +100,7 @@ bool aggregate_awe_pkts(uint8_t *buf, uint32_t len)
 	uint8_t is_sof = hdr->flags & FLAG_SOF_MSK;
 	uint8_t is_eof = hdr->flags & FLAG_EOF_MSK;
 
-	if (is_sof)
-	{
+	if (is_sof) {
 		/* Start of Frame */
 		rx_ctx.length = 0;
 		rx_ctx.expected_chunk_id = 0;
@@ -110,22 +108,19 @@ bool aggregate_awe_pkts(uint8_t *buf, uint32_t len)
 	}
 
 	/* Ignore if no active packet */
-	if (rx_ctx.in_progress != 1)
-	{
+	if (rx_ctx.in_progress != 1) {
 		return false;
 	}
 
 	/* Order check */
-	if (hdr->chunk_id != rx_ctx.expected_chunk_id)
-	{
+	if (hdr->chunk_id != rx_ctx.expected_chunk_id) {
 		printf("ERROR: Out-of-order chunk!\n");
 		rx_ctx.in_progress = 0;
 		return false;
 	}
 
 	/* Bounds check */
-	if (rx_ctx.length + hdr->chunk_len > AWE_MAX_PKT_LEN)
-	{
+	if (rx_ctx.length + hdr->chunk_len > AWE_MAX_PKT_LEN) {
 		printf("ERROR: Buffer overflow!\n");
 		rx_ctx.in_progress = 0;
 		return false;
@@ -138,8 +133,7 @@ bool aggregate_awe_pkts(uint8_t *buf, uint32_t len)
 	rx_ctx.expected_chunk_id++;
 
 	/* End of Frame */
-	if (is_eof)
-	{
+	if (is_eof) {
 		rx_ctx.in_progress = 0;
 		return true;
 	}

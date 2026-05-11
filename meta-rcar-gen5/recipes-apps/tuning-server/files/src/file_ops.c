@@ -4,7 +4,7 @@
 #include <dirent.h>
 
 #define RPMSG_SYSFS_PATH "/sys/bus/rpmsg/devices/"
-#define RPMSG_EP_SERVICE "virtio0.rpmsg-client-sample"
+#define RPMSG_EP_SERVICE "virtio0.tuning_ep"
 
 int get_endpoint_info(int *dst_src, int *dst_addr)
 {
