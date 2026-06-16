@@ -1,6 +1,14 @@
 #!/bin/sh
 
-echo "Loading remoteproc firmware"
+#Flash DSP application
+cd /home/root/dsp_flash
+chmod +x ./devmemcpy
+./run_dspss.sh
+cd
 
-echo rpmsg_mfis0_cluster0_core0.elf > /sys/class/remoteproc/remoteproc0/firmware
-echo start > /sys/class/remoteproc/remoteproc0/state
+sleep 10
+
+# Load DSP firmware
+echo "Loading dsp firmware"
+echo dspss_sample_kernel_cl0_c0_x5h.elf > /sys/class/remoteproc/remoteproc1/firmware
+echo start > /sys/class/remoteproc/remoteproc1/state
