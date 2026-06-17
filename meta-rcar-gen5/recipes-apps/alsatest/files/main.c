@@ -14,61 +14,85 @@
 #include <pthread.h>
 #include <semaphore.h>
 
-#define PCM_DEV "hw:0,0"
-#define SAMPLE_RATE (48000)
-#define CHANNELS 2
-#define FORMAT SND_PCM_FORMAT_S16_LE
-#define FRAME_SIZE (240U)
-#define FRAME_BYTES (960U)
-#define BUF_SIZE (960U)
-#define AUDIO_BUF_LEN (5U)
+#define PCM_DEV        "hw:0,0"
+#define SAMPLE_RATE    (48000)
+#define CHANNELS       (2)
+#define FORMAT         SND_PCM_FORMAT_S16_LE
+#define FRAME_SIZE     (240U)
+#define FRAME_BYTES    (960U)
+#define BUF_SIZE       (960U)
+#define AUDIO_BUF_LEN  (5U)
+#define PCM_WAIT_MS    (5U)
 
+/* debugfs nodes */
 #define PLAYBACK_DBGFS "/sys/kernel/debug/audio_fe_g0/playback_buf"
 #define CAPTURE_DBGFS  "/sys/kernel/debug/audio_fe_g0/capture_buf"
 
+/* wav file header */
 typedef struct {
-	char     id[4];
-	uint32_t size;
-	char     wave[4];
+	char           id[4];
+	uint32_t       size;
+	char           wave[4];
 } riff_header_t;
 
+/* chunk header */
 typedef struct {
-	char     id[4];
-	uint32_t size;
+	char           id[4];
+	uint32_t       size;
 } chunk_header_t;
 
+/* circular buffer for audio data */
 typedef struct {
-	uint8_t buffer[AUDIO_BUF_LEN][FRAME_BYTES];
-	uint32_t rd_id, wr_id;
+	uint8_t         buffer[AUDIO_BUF_LEN][FRAME_BYTES];
+	uint32_t        rd_id;
+	uint32_t        wr_id;
 } file_rd_buf_t;
 
+/* private struct for application */
 typedef struct {
-	file_rd_buf_t buf;
-	FILE *fin;
-	FILE *fout;
-	uint32_t remaining;
-	snd_pcm_t *pcm;
-	int dbgfs_fd;
+	file_rd_buf_t   buf;
+	FILE            *fin;
+	FILE            *fout;
+	uint32_t        remaining;
+	snd_pcm_t       *pcm;
+	int             dbgfs_fd;
 	pthread_mutex_t lock;
-	bool terminate;
-	sem_t start_pcm;
-	sem_t start_out;
+	bool            terminate;
+	sem_t           start_pcm;
+	sem_t           start_out;
 } test_priv_t;
 
+/* print pcm error */
+static void print_pcm_error(int err, int count)
+{
+	if (err == -EPIPE)
+		printf("error: xrun (count: %u)\n", count);
+	else if (err == -ESTRPIPE)
+		printf("error: suspended (count: %u)\n", count);
+	else
+		printf("error: unknown(%d) (count: %u)\n", err, count);
+}
+
+/* read audio data from circular buffer */
 static bool read_buf(file_rd_buf_t *buf, uint8_t *data)
 {
-	if (buf->rd_id == buf->wr_id)
+	if (buf->rd_id == buf->wr_id) {
+		/* buffer empty */
 		return false;
+	}
 
 	memcpy(data, &buf->buffer[buf->rd_id][0], FRAME_BYTES);
 	buf->rd_id = (buf->rd_id + 1) % AUDIO_BUF_LEN;
 	return true;
 }
 
+/* write audio data into circular buffer from a file */
 static bool write_buf_from_file(file_rd_buf_t *buf, FILE *fin, size_t size)
 {
-	if ((buf->wr_id + 1) % AUDIO_BUF_LEN == buf->rd_id)
+	if ((buf->wr_id + 1) % AUDIO_BUF_LEN == buf->rd_id) {
+		/* buffer full */
 		return false;
+	}
 
 	if (fread(&buf->buffer[buf->wr_id][0], 1, size, fin) != size) {
 		printf("Failed to read audio data\n");
@@ -78,20 +102,26 @@ static bool write_buf_from_file(file_rd_buf_t *buf, FILE *fin, size_t size)
 	return true;
 }
 
+/* write audio data into circular buffer*/
 static bool write_buf(file_rd_buf_t *buf, uint8_t *data)
 {
-	if ((buf->wr_id + 1) % AUDIO_BUF_LEN == buf->rd_id)
+	if ((buf->wr_id + 1) % AUDIO_BUF_LEN == buf->rd_id) {
+		/* buffer full */
 		return false;
+	}
 
 	memcpy(&buf->buffer[buf->rd_id][0], data, FRAME_BYTES);
 	buf->wr_id = (buf->wr_id + 1) % AUDIO_BUF_LEN;
 	return true;
 }
 
+/* read audio data from circular buffer, and write it into a file */
 static bool read_buf_to_file(file_rd_buf_t *buf, FILE *fout, size_t size)
 {
-	if (buf->rd_id == buf->wr_id)
+	if (buf->rd_id == buf->wr_id) {
+		/* buffer empty */
 		return false;
+	}
 
 	if (fwrite(&buf->buffer[buf->wr_id][0], 1, size, fout) != size) {
 		printf("Failed to write out data\n");
@@ -101,6 +131,7 @@ static bool read_buf_to_file(file_rd_buf_t *buf, FILE *fout, size_t size)
 	return true;
 }
 
+/* input file read thread for playback test */
 static void *playback_input_thread(void *arg)
 {
 	test_priv_t *priv = (test_priv_t *)arg;
@@ -111,6 +142,7 @@ static void *playback_input_thread(void *arg)
 
 	printf("Start %s\n", __func__);
 
+	/* check for remaining data from input file */
 	while (remaining > 0) {
 		struct timespec start, end;
 		long time_us;
@@ -118,14 +150,17 @@ static void *playback_input_thread(void *arg)
 
 		clock_gettime(CLOCK_MONOTONIC, &start);
 
+		/* check for terminate flag */
 		pthread_mutex_lock(&priv->lock);
 		terminate = priv->terminate;
 		pthread_mutex_unlock(&priv->lock);
 		if (terminate)
 			break;
 
-		this_block = (remaining > FRAME_BYTES) ? FRAME_BYTES : remaining;
+		this_block =
+			(remaining > FRAME_BYTES) ? FRAME_BYTES : remaining;
 
+		/* read data from file, and write it into circular buffer */
 		if (!write_buf_from_file(&priv->buf, priv->fin, this_block)) {
 			usleep(100);
 			continue;
@@ -135,8 +170,10 @@ static void *playback_input_thread(void *arg)
 
 		count++;
 
+		/* time profiling */
 		clock_gettime(CLOCK_MONOTONIC, &end);
-		time_us = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000;
+		time_us = (end.tv_sec - start.tv_sec) * 1000000 +
+			(end.tv_nsec - start.tv_nsec) / 1000;
 
 		if ((time_us < tmin_us) || (!tmin_us))
 			tmin_us = time_us;
@@ -146,11 +183,14 @@ static void *playback_input_thread(void *arg)
 
 		tavg_us = tavg_us + ((time_us - tavg_us) / count);
 
-		if (count == (AUDIO_BUF_LEN - 1))
+		if (count == (AUDIO_BUF_LEN - 1)) {
+			/* signal pcm thread */
 			sem_post(&priv->start_pcm);
+		}
 	}
 
-	printf("Exit from %s: max time: %ld us, min time: %ld us, avg time: %ld us, total count: %d\n",
+	printf("Exit from %s: max time: %ld us, min time: %ld us,"
+			" avg time: %ld us, total count: %d\n",
 			__func__, tmax_us, tmin_us, tavg_us, count);
 
 	pthread_mutex_lock(&priv->lock);
@@ -160,6 +200,7 @@ static void *playback_input_thread(void *arg)
 	return NULL;
 }
 
+/* PCM thread for playback test */
 static void *playback_pcm_thread(void *arg)
 {
 	test_priv_t *priv = (test_priv_t *)arg;
@@ -190,72 +231,83 @@ static void *playback_pcm_thread(void *arg)
 		if (terminate)
 			break;
 
+		/* check for available audio frames */
 		avail = snd_pcm_avail_update(pcm);
 		if (started && !avail) {
-			err = snd_pcm_wait(pcm, 5);
+			/* wait for PCM_WAIT_MS to get available frames */
+			err = snd_pcm_wait(pcm, PCM_WAIT_MS);
 			if (err == 0){
-				printf("timeout: snd_pcm_wait (count: %u)\n", count);
+				/* timeout, no available frames */
 				continue;
 			}
 
 			if (err < 0) {
-				if (err == -EPIPE)
-					printf("error: xrun (count: %u)\n", count);
-				else if (err == -ESTRPIPE)
-					printf("error: suspended (count: %u)\n", count);
-				else
-					printf("error: unknown(%d) (count: %u)\n", err, count);
+				print_pcm_error(err, count);
 
+				/* Exit from application */
 				break;
 			}
 		}
 
 		if (started && (avail < 0)) {
-			printf("snd_pcm_avail_update return error (count: %u)\n", count);
-			if (avail == -EPIPE)
-				printf("error: xrun\n");
-			else if (avail == -ESTRPIPE)
-				printf("error: suspended\n");
-			else
-				printf("error: unknown(%ld)\n", avail);
+			printf("snd_pcm_avail_update error (count: %u)\n",
+					count);
+			print_pcm_error(avail, count);
 
+			/* Exit from application */
 			break;
 		}
 
 		mmap_frames = FRAME_SIZE;
 
-		if ((err = snd_pcm_mmap_begin(pcm, &areas, &offset, &mmap_frames)) < 0) {
-			printf("ERROR: mmap_begin failed: %s (count: %u)\n", snd_strerror(err), count);
+		/* mmap pcm buffer */
+		err = snd_pcm_mmap_begin(pcm, &areas, &offset, &mmap_frames);
+		if (err < 0) {
+			printf("ERROR: mmap_begin failed: %s (count: %u)\n",
+					snd_strerror(err), count);
+
+			/* Exit from application */
 			break;
 		}
 
 		if ((mmap_frames != FRAME_SIZE) || (offset % FRAME_SIZE)) {
+			/* Wrong frame size or wrong offset */
 			snd_pcm_mmap_commit(pcm, offset, 0);
 			continue;
 		}
 
 		mmap_buf = (char*)areas[0].addr + offset * 4;
 
+		/* read audio data from circular buffer into mmaped area */
 		ret = read_buf(&priv->buf, mmap_buf);
 		if (!ret) {
-			printf("input audio data is not available (count: %u)\n", count);
+			printf("input audio data not available (count: %u)\n",
+					count);
 			snd_pcm_mmap_commit(pcm, offset, 0);
 			continue;
 		}
 
-		if ((err = snd_pcm_mmap_commit(pcm, offset, mmap_frames)) < 0) {
-			printf("%s: snd_pcm_mmap_commit failed (count: %u)\n", __func__, count);
+		err = snd_pcm_mmap_commit(pcm, offset, mmap_frames);
+		if (err < 0) {
+			printf("%s: snd_pcm_mmap_commit failed (count: %u)\n",
+					__func__, count);
+
+			/* Exit from application */
 			break;
 		}
 
 		if (!started) {
+			/* start playback if it is not done yet */
 			snd_pcm_start(pcm);
 			started = true;
 		}
 
 		count++;
+
+		/* time profiling */
 		clock_gettime(CLOCK_MONOTONIC, &end);
-		time_us = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000;
+		time_us = (end.tv_sec - start.tv_sec) * 1000000 +
+			(end.tv_nsec - start.tv_nsec) / 1000;
 
 		if ((time_us < tmin_us) || (!tmin_us))
 			tmin_us = time_us;
@@ -265,11 +317,14 @@ static void *playback_pcm_thread(void *arg)
 
 		tavg_us = tavg_us + ((time_us - tavg_us) / count);
 
-		if (count == 1)
+		if (count == 1) {
+			/* signal out thread */
 			sem_post(&priv->start_out);
+		}
 	}
 
-	printf("Exit from %s: max time: %ld us, min time: %ld us, avg time: %ld us, total count: %d\n",
+	printf("Exit from %s: max time: %ld us, min time: %ld us,"
+			" avg time: %ld us, total count: %d\n",
 			__func__, tmax_us, tmin_us, tavg_us, count);
 
 	pthread_mutex_lock(&priv->lock);
@@ -279,6 +334,7 @@ static void *playback_pcm_thread(void *arg)
 	return NULL;
 }
 
+/* output file write thread for playback test */
 static void *playback_output_thread(void *arg)
 {
 	test_priv_t *priv = (test_priv_t *)arg;
@@ -303,20 +359,26 @@ static void *playback_output_thread(void *arg)
 		if (terminate)
 			break;
 
+		/* read buffer via debugfs */
 		if (read(priv->dbgfs_fd, audio_data, FRAME_BYTES) < 0) {
 			usleep(100);
 			continue;
 		}
 
-		if (fwrite(audio_data, 1, FRAME_BYTES, priv->fout) != FRAME_BYTES) {
+		if (fwrite(audio_data, 1, FRAME_BYTES, priv->fout)
+				!= FRAME_BYTES) {
 			printf("Failed to write data (count: %u)\n", count);
+
+			/* Exit from application */
 			break;
 		}
 
 		count++;
 
+		/* time profiling */
 		clock_gettime(CLOCK_MONOTONIC, &end);
-		time_us = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000;
+		time_us = (end.tv_sec - start.tv_sec) * 1000000 +
+			(end.tv_nsec - start.tv_nsec) / 1000;
 
 		if ((time_us < tmin_us) || (!tmin_us))
 			tmin_us = time_us;
@@ -327,7 +389,8 @@ static void *playback_output_thread(void *arg)
 		tavg_us = tavg_us + ((time_us - tavg_us) / count);
 	}
 
-	printf("Exit from %s: max time: %ld us, min time: %ld us, avg time: %ld us, total count: %d\n",
+	printf("Exit from %s: max time: %ld us, min time: %ld us,"
+			" avg time: %ld us, total count: %d\n",
 			__func__, tmax_us, tmin_us, tavg_us, count);
 
 	pthread_mutex_lock(&priv->lock);
@@ -338,6 +401,7 @@ static void *playback_output_thread(void *arg)
 	return NULL;
 }
 
+/* Playback test */
 static int test_playback(FILE *fin, FILE *fout, uint32_t remaining)
 {
 	snd_pcm_t *pcm = NULL;
@@ -357,21 +421,26 @@ static int test_playback(FILE *fin, FILE *fout, uint32_t remaining)
 	priv->fout = fout;
 	priv->remaining = remaining;
 
+	/* open debugfs to read output buffer */
 	dbgfs_fd = open(PLAYBACK_DBGFS, O_RDONLY);
 	if (dbgfs_fd < 0) {
-		printf("Failed to open %s (error: %s)\n", PLAYBACK_DBGFS, strerror(errno));
+		printf("Failed to open %s (error: %s)\n",
+				PLAYBACK_DBGFS, strerror(errno));
 		free(priv);
 		return dbgfs_fd;
 	}
 	priv->dbgfs_fd = dbgfs_fd;
 
-	if ((err = snd_pcm_open(&pcm, PCM_DEV, SND_PCM_STREAM_PLAYBACK, 0)) < 0) {
+	/* open PCM channel for playback */
+	err = snd_pcm_open(&pcm, PCM_DEV, SND_PCM_STREAM_PLAYBACK, 0);
+	if (err < 0) {
 		printf("ERROR: cannot open PCM: %s\n", snd_strerror(err));
 		close(dbgfs_fd);
 		free(priv);
 		return err;
 	}
 
+	/* set PCM hardware parameters */
 	snd_pcm_hw_params_alloca(&hw);
 	snd_pcm_hw_params_any(pcm, hw);
 
@@ -444,6 +513,7 @@ cleanup:
 	return 0;
 }
 
+/* input file read thread for capture test */
 static void *capture_input_thread(void *arg)
 {
 	test_priv_t *priv = (test_priv_t *)arg;
@@ -470,6 +540,7 @@ static void *capture_input_thread(void *arg)
 		if (terminate)
 			break;
 
+		/* read audio data from input file */
 		this_block = (remaining > FRAME_BYTES) ? FRAME_BYTES : remaining;
 		if (fread(audio_data, 1, this_block, priv->fin) != this_block) {
 			printf("Failed to read audio data (count: %u)\n", count);
@@ -484,6 +555,7 @@ static void *capture_input_thread(void *arg)
 			if (terminate)
 				break;
 
+			/* write audio buffer to debugfs */
 			wc = write(dbgfs_fd, (const void *)audio_data, FRAME_BYTES);
 			if (wc < 0)
 				usleep(100);
@@ -493,8 +565,10 @@ static void *capture_input_thread(void *arg)
 
 		count++;
 
+		/* time profiling */
 		clock_gettime(CLOCK_MONOTONIC, &end);
-		time_us = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000;
+		time_us = (end.tv_sec - start.tv_sec) * 1000000 +
+			(end.tv_nsec - start.tv_nsec) / 1000;
 
 		if ((time_us < tmin_us) || (!tmin_us))
 			tmin_us = time_us;
@@ -504,11 +578,14 @@ static void *capture_input_thread(void *arg)
 
 		tavg_us = tavg_us + ((time_us - tavg_us) / count);
 
-		if (count == 1)
+		if (count == 1) {
+			/* signal pcm thread */
 			sem_post(&priv->start_pcm);
+		}
 	}
 
-	printf("Exit from %s: max time: %ld us, min time: %ld us, avg time: %ld us, total count: %d\n",
+	printf("Exit from %s: max time: %ld us, min time: %ld us,"
+			" avg time: %ld us, total count: %d\n",
 			__func__, tmax_us, tmin_us, tavg_us, count);
 
 	pthread_mutex_lock(&priv->lock);
@@ -520,6 +597,7 @@ static void *capture_input_thread(void *arg)
 	return NULL;
 }
 
+/* PCM thread for capture test */
 static void *capture_pcm_thread(void *arg)
 {
 	test_priv_t *priv = (test_priv_t *)arg;
@@ -556,46 +634,47 @@ static void *capture_pcm_thread(void *arg)
 			started = true;
 		}
 
+		/* check for available audio frames */
 		avail = snd_pcm_avail_update(pcm);
 		if (!avail) {
-			err = snd_pcm_wait(pcm, 5);
+			/* wait for PCM_WAIT_MS to get available frames */
+			err = snd_pcm_wait(pcm, PCM_WAIT_MS);
 			if (err == 0){
-				printf("timeout: snd_pcm_wait (count: %u)\n", count);
+				/* timeout, no available frames */
 				continue;
 			}
 
 			if (err < 0) {
-				if (err == -EPIPE)
-					printf("error: xrun (count: %u)\n", count);
-				else if (err == -ESTRPIPE)
-					printf("error: suspended (count: %u)\n", count);
-				else
-					printf("error: unknown(%d) (count: %u)\n", err, count);
+				print_pcm_error(err, count);
 
+				/* Exit from application */
 				break;
 			}
 		}
 
 		if (avail < 0) {
-			printf("snd_pcm_avail_update return error (count: %u)\n", count);
-			if (avail == -EPIPE)
-				printf("error: xrun\n");
-			else if (avail == -ESTRPIPE)
-				printf("error: suspended\n");
-			else
-				printf("error: unknown(%ld)\n", avail);
+			printf("snd_pcm_avail_update error (count: %u)\n",
+					count);
+			print_pcm_error(avail, count);
 
+			/* Exit from application */
 			break;
 		}
 
 		mmap_frames = FRAME_SIZE;
 
-		if ((err = snd_pcm_mmap_begin(pcm, &areas, &offset, &mmap_frames)) < 0) {
-			printf("ERROR: mmap_begin failed: %s (count: %u)\n", snd_strerror(err), count);
+		/* mmap pcm buffer */
+		err = snd_pcm_mmap_begin(pcm, &areas, &offset, &mmap_frames);
+		if (err < 0) {
+			printf("ERROR: mmap_begin failed: %s (count: %u)\n",
+					snd_strerror(err), count);
+
+			/* Exit from application */
 			break;
 		}
 
 		if ((mmap_frames != FRAME_SIZE) || (offset % FRAME_SIZE)) {
+			/* Wrong frame size or wrong offset */
 			snd_pcm_mmap_commit(pcm, offset, 0);
 			continue;
 		}
@@ -609,15 +688,21 @@ static void *capture_pcm_thread(void *arg)
 			continue;
 		}
 
-		if ((err = snd_pcm_mmap_commit(pcm, offset, mmap_frames)) < 0) {
-			printf("%s: snd_pcm_mmap_commit failed (count: %u)\n", __func__, count);
+		err = snd_pcm_mmap_commit(pcm, offset, mmap_frames);
+		if (err < 0) {
+			printf("%s: snd_pcm_mmap_commit failed (count: %u)\n",
+					__func__, count);
+
+			/* Exit from application */
 			break;
 		}
 
 		count++;
 
+		/* time profiling */
 		clock_gettime(CLOCK_MONOTONIC, &end);
-		time_us = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000;
+		time_us = (end.tv_sec - start.tv_sec) * 1000000 +
+			(end.tv_nsec - start.tv_nsec) / 1000;
 
 		if ((time_us < tmin_us) || (!tmin_us))
 			tmin_us = time_us;
@@ -627,11 +712,14 @@ static void *capture_pcm_thread(void *arg)
 
 		tavg_us = tavg_us + ((time_us - tavg_us) / count);
 
-		if (count == 1)
+		if (count == 1) {
+			/* signal out thread */
 			sem_post(&priv->start_out);
+		}
 	}
 
-	printf("Exit from %s: max time: %ld us, min time: %ld us, avg time: %ld us, total count: %d\n",
+	printf("Exit from %s: max time: %ld us, min time: %ld us,"
+			" avg time: %ld us, total count: %d\n",
 			__func__, tmax_us, tmin_us, tavg_us, count);
 
 	pthread_mutex_lock(&priv->lock);
@@ -641,6 +729,7 @@ static void *capture_pcm_thread(void *arg)
 	return NULL;
 }
 
+/* output file write thread for capture test */
 static void *capture_output_thread(void *arg)
 {
 	test_priv_t *priv = (test_priv_t *)arg;
@@ -665,6 +754,7 @@ static void *capture_output_thread(void *arg)
 		if (terminate)
 			break;
 
+		/* read audio data from circular buffer, write it to output file */
 		if (!read_buf_to_file(&priv->buf, priv->fout, FRAME_BYTES)) {
 			usleep(100);
 			continue;
@@ -672,8 +762,10 @@ static void *capture_output_thread(void *arg)
 
 		count++;
 
+		/* time profiling */
 		clock_gettime(CLOCK_MONOTONIC, &end);
-		time_us = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000;
+		time_us = (end.tv_sec - start.tv_sec) * 1000000 +
+			(end.tv_nsec - start.tv_nsec) / 1000;
 
 		if ((time_us < tmin_us) || (!tmin_us))
 			tmin_us = time_us;
@@ -684,7 +776,8 @@ static void *capture_output_thread(void *arg)
 		tavg_us = tavg_us + ((time_us - tavg_us) / count);
 	}
 
-	printf("Exit from %s: max time: %ld us, min time: %ld us, avg time: %ld us, total count: %d\n",
+	printf("Exit from %s: max time: %ld us, min time: %ld us,"
+			" avg time: %ld us, total count: %d\n",
 			__func__, tmax_us, tmin_us, tavg_us, count);
 
 	pthread_mutex_lock(&priv->lock);
@@ -694,6 +787,7 @@ static void *capture_output_thread(void *arg)
 	return NULL;
 }
 
+/* Capture test */
 static int test_capture(FILE *fin, FILE *fout, uint32_t remaining)
 {
 	snd_pcm_t *pcm = NULL;
@@ -719,6 +813,7 @@ static int test_capture(FILE *fin, FILE *fout, uint32_t remaining)
 	priv->fout = fout;
 	priv->remaining = remaining;
 
+	/* open debugfs to read output buffer */
 	dbgfs_fd = open(CAPTURE_DBGFS, O_RDWR);
 	if (dbgfs_fd < 0) {
 		printf("Failed to open %s (error: %s)\n", CAPTURE_DBGFS, strerror(errno));
@@ -727,14 +822,16 @@ static int test_capture(FILE *fin, FILE *fout, uint32_t remaining)
 	}
 	priv->dbgfs_fd = dbgfs_fd;
 
-	/* Open PCM capture */
-	if ((err = snd_pcm_open(&pcm, PCM_DEV, SND_PCM_STREAM_CAPTURE, 0)) < 0) {
+	/* open PCM channel for capture */
+	err = snd_pcm_open(&pcm, PCM_DEV, SND_PCM_STREAM_CAPTURE, 0);
+	if (err < 0) {
 		printf("ERROR: cannot open PCM: %s\n", snd_strerror(err));
 		close(dbgfs_fd);
 		free(priv);
 		return err;
 	}
 
+	/* set PCM hardware parameters */
 	snd_pcm_hw_params_alloca(&hw);
 	snd_pcm_hw_params_any(pcm, hw);
 
@@ -765,12 +862,12 @@ static int test_capture(FILE *fin, FILE *fout, uint32_t remaining)
 	sem_init(&priv->start_out, 0, 0);
 
 	if (pthread_create(&cap_in_t, NULL, capture_input_thread, priv)) {
-		printf("Error: pthread_create for capture_input_thread failed\n");
+		printf("pthread_create for capture_input_thread failed\n");
 		goto cleanup;
 	}
 
 	if (pthread_create(&cap_pcm_t, NULL, capture_pcm_thread, priv)) {
-		printf("Error: pthread_create for capture_pcm_thread failed\n");
+		printf("pthread_create for capture_pcm_thread failed\n");
 
 		pthread_mutex_lock(&priv->lock);
 		priv->terminate = true;
@@ -781,7 +878,7 @@ static int test_capture(FILE *fin, FILE *fout, uint32_t remaining)
 	}
 
 	if (pthread_create(&cap_out_t, NULL, capture_output_thread, priv)) {
-		printf("Error: pthread_create for capture_output_thread failed\n");
+		printf("pthread_create for capture_output_thread failed\n");
 
 		pthread_mutex_lock(&priv->lock);
 		priv->terminate = true;
@@ -807,13 +904,15 @@ cleanup:
 	return 0;
 }
 
+/* helper function to copy non-data chunk from input file to output file */
 static int copy_n_bytes(FILE *src, FILE *dst, uint32_t n)
 {
 	uint8_t temp[4096];
 	uint32_t remaining = n;
 
 	while (remaining > 0) {
-		size_t chunk = (remaining > sizeof(temp)) ? sizeof(temp) : remaining;
+		size_t chunk =
+			(remaining > sizeof(temp)) ? sizeof(temp) : remaining;
 		size_t rd = fread(temp, 1, chunk, src);
 		if (rd != chunk) {
 			return -1;
@@ -826,6 +925,7 @@ static int copy_n_bytes(FILE *src, FILE *dst, uint32_t n)
 	return 0;
 }
 
+/* parse header of input wav file */
 int parse_header(FILE *fin, FILE *fout, uint32_t *data_size)
 {
 	riff_header_t riff;
@@ -833,25 +933,26 @@ int parse_header(FILE *fin, FILE *fout, uint32_t *data_size)
 	int found_data = 0;
 
 	if (fread(&riff, 1, sizeof(riff), fin) != sizeof(riff)) {
-		fprintf(stderr, "Error: Failed to read RIFF header\n");
+		printf("Error: Failed to read RIFF header\n");
 		return 1;
 	}
 
-	if (memcmp(riff.id, "RIFF", 4) != 0 || memcmp(riff.wave, "WAVE", 4) != 0) {
-		fprintf(stderr, "Error: Not a valid WAV file\n");
+	if (memcmp(riff.id, "RIFF", 4) != 0 || memcmp(riff.wave, "WAVE", 4)
+			!= 0) {
+		printf("Error: Not a valid WAV file\n");
 		return 1;
 	}
 
 	/* Write RIFF header unchanged */
 	if (fwrite(&riff, 1, sizeof(riff), fout) != sizeof(riff)) {
-		fprintf(stderr, "Error: Failed to write RIFF header\n");
+		printf("Error: Failed to write RIFF header\n");
 		return 1;
 	}
 
 	while (fread(&ch, 1, sizeof(ch), fin) == sizeof(ch)) {
 		/* Write chunk header unchanged */
 		if (fwrite(&ch, 1, sizeof(ch), fout) != sizeof(ch)) {
-			fprintf(stderr, "Error: Failed to write chunk header\n");
+			printf("Error: Failed to write chunk header\n");
 			return 1;
 		}
 
@@ -863,19 +964,23 @@ int parse_header(FILE *fin, FILE *fout, uint32_t *data_size)
 		} else {
 			/* Copy this entire non-data chunk unchanged */
 			if (copy_n_bytes(fin, fout, ch.size) != 0) {
-				fprintf(stderr, "Error: Failed to copy chunk %.4s\n", ch.id);
+				printf("Error: Failed to copy chunk %.4s\n",
+						ch.id);
 				return 1;
 			}
 
-			/* WAV chunks are word-aligned: odd-sized chunks have 1 pad byte */
+			/*
+			 * WAV chunks are word-aligned:
+			 * odd-sized chunks have 1 pad byte
+			 */
 			if (ch.size & 1) {
 				int pad = fgetc(fin);
 				if (pad == EOF) {
-					fprintf(stderr, "Error: Failed to read chunk padding\n");
+					printf("Failed to read padding\n");
 					return 1;
 				}
 				if (fputc(pad, fout) == EOF) {
-					fprintf(stderr, "Error: Failed to write chunk padding\n");
+					printf("Failed to write padding\n");
 					return 1;
 				}
 			}
@@ -883,7 +988,7 @@ int parse_header(FILE *fin, FILE *fout, uint32_t *data_size)
 	}
 
 	if (!found_data) {
-		fprintf(stderr, "Error: 'data' chunk not found\n");
+		printf("Error: 'data' chunk not found\n");
 		return 1;
 	}
 	return 0;
@@ -896,25 +1001,29 @@ int main(int argc, char *argv[])
 	uint32_t data_size;
 
 	if (argc != 4) {
-		printf("Usage: %s playback|capture <input.wav> <output.wav>\n", argv[0]);
+		printf("Usage: %s playback|capture <input.wav> <output.wav>\n",
+				argv[0]);
 		return ret;
 	}
 
 	const char *input = argv[2];
 	const char *output = argv[3];
 
+	/* open input file for read */
 	fin = fopen(input, "rb");
 	if (!fin) {
 		printf("Failed to open %s\n", input);
 		goto out;
 	}
 
+	/* open output file for write */
 	fout = fopen(output, "wb");
 	if (!fin) {
 		printf("Failed to open %s\n", output);
 		goto out;
 	}
 
+	/* parse header of input file and copy this to output file */
 	if (parse_header(fin, fout, &data_size)) {
 		printf("Failed to parse header\n");
 		goto out;
