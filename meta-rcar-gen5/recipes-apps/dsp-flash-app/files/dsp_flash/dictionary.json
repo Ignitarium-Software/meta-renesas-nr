@@ -1,0 +1,10 @@
+{
+    "1": {
+      "name": "entry_1",
+      "args": ["cpu", "counter1", "counter2", "temp_value"]
+    },
+    "2": {
+      "name": "entry_2",
+      "args": ["temp1", "temp2", "temp3", "temp4"]
+    }
+  }
