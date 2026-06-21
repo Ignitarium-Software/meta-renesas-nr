@@ -1,5 +1,5 @@
 RENESAS_BSP_URL = " \
-    git@github.com:Ignitarium-Software/linux-bsp-nr.git;protocol=https"
+    git://github.com/Ignitarium-Software/linux-bsp.git;protocol=https"
 
 RENESAS_BSP_BRANCH = "${@oe.utils.conditional("MACHINE", "x5h", \
     "v6.1.102/rcar-5.2.0.rc11_vpf.rc25", \
