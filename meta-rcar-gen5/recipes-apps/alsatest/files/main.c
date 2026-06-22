@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <signal.h>
 
 #define PCM_DEV        "hw:0,0"
 #define SAMPLE_RATE    (48000)
@@ -61,6 +62,18 @@ typedef struct {
 	sem_t           start_pcm;
 	sem_t           start_out;
 } test_priv_t;
+
+/* Global variables */
+test_priv_t *g_priv;
+
+/* signal handler for SIGINT */
+void handle_sigint(int sig)
+{
+	printf("CTRL+C Pressed, Stopping application..\n");
+	pthread_mutex_lock(&g_priv->lock);
+	g_priv->terminate = true;
+	pthread_mutex_unlock(&g_priv->lock);
+}
 
 /* print pcm error */
 static void print_pcm_error(int err, int count)
@@ -421,6 +434,9 @@ static int test_playback(FILE *fin, FILE *fout, uint32_t remaining)
 	priv->fout = fout;
 	priv->remaining = remaining;
 
+	/* global variable to use in signal handler */
+	g_priv = priv;
+
 	/* open debugfs to read output buffer */
 	dbgfs_fd = open(PLAYBACK_DBGFS, O_RDONLY);
 	if (dbgfs_fd < 0) {
@@ -469,6 +485,9 @@ static int test_playback(FILE *fin, FILE *fout, uint32_t remaining)
 	pthread_mutex_init(&priv->lock, NULL);
 	sem_init(&priv->start_pcm, 0, 0);
 	sem_init(&priv->start_out, 0, 0);
+
+	/* Register signal handler */
+	signal(SIGINT, handle_sigint);
 
 	if (pthread_create(&play_in_t, NULL, playback_input_thread, priv)) {
 		printf("Error: pthread_create for playback_input_thread failed\n");
@@ -578,7 +597,7 @@ static void *capture_input_thread(void *arg)
 
 		tavg_us = tavg_us + ((time_us - tavg_us) / count);
 
-		if (count == 1) {
+		if (count == (AUDIO_BUF_LEN - 1)) {
 			/* signal pcm thread */
 			sem_post(&priv->start_pcm);
 		}
@@ -813,6 +832,9 @@ static int test_capture(FILE *fin, FILE *fout, uint32_t remaining)
 	priv->fout = fout;
 	priv->remaining = remaining;
 
+	/* global variable to use in signal handler */
+	g_priv = priv;
+
 	/* open debugfs to read output buffer */
 	dbgfs_fd = open(CAPTURE_DBGFS, O_RDWR);
 	if (dbgfs_fd < 0) {
@@ -861,6 +883,9 @@ static int test_capture(FILE *fin, FILE *fout, uint32_t remaining)
 	sem_init(&priv->start_pcm, 0, 0);
 	sem_init(&priv->start_out, 0, 0);
 
+	/* Register signal handler */
+	signal(SIGINT, handle_sigint);
+
 	if (pthread_create(&cap_in_t, NULL, capture_input_thread, priv)) {
 		printf("pthread_create for capture_input_thread failed\n");
 		goto cleanup;
@@ -888,6 +913,8 @@ static int test_capture(FILE *fin, FILE *fout, uint32_t remaining)
 		pthread_join(cap_pcm_t, NULL);
 		goto cleanup;
 	}
+
+	printf("%s: App started. Press CTRL+C to Stop Application.\n", __func__);
 
 	pthread_join(cap_in_t, NULL);
 	pthread_join(cap_pcm_t, NULL);
