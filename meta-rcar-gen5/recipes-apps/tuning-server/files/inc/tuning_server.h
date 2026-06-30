@@ -19,6 +19,11 @@
 #define FLAG_SOF_MSK  0x01   /* Start of frame */
 #define FLAG_EOF_MSK  0x02   /* End of frame */
 
+#define PACKET_LENGTH_WORDS(x) (x[0]>>16)
+#define PACKET_LENGTH_BYTES(x) ((x[0]>>16) * sizeof(x[0]))
+#define PACKET_INSTANCEID(x) (x[0] >> 8) & 0xff
+#define PACKET_OPCODE(x) ((INT32)x[0] & 0xffU)
+
 typedef struct __attribute__((packed))
 {
 	uint32_t type;	   /* type of the packet */

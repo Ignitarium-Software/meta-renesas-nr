@@ -5,8 +5,7 @@
 #include <unistd.h>
 #include <string.h>
 
-#define PORT 8080
-#define SERVER_IP "192.168.0.20"
+#define PORT 15004
 
 int init_tcp_server(int *server_fd)
 {
