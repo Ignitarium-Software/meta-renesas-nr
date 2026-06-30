@@ -143,5 +143,8 @@ bool aggregate_awe_pkts(uint8_t *buf, uint32_t len)
 
 int send_response(int client_fd)
 {
-	return send(client_fd, op_buffer, rx_ctx.length, 0);
+	uint32_t *buf = (uint32_t *)&op_buffer[0];
+	uint32_t plen = PACKET_LENGTH_BYTES(buf);
+
+	return send(client_fd, buf, plen, 0);
 }

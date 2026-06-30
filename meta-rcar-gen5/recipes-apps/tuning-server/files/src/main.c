@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <semaphore.h>
 #include <stdbool.h>
+#include <pthread.h>
 #include "tuning_server.h"
 
 #define CTRL_DEV "/dev/rpmsg_ctrl0"
@@ -15,7 +16,7 @@
 
 static volatile sig_atomic_t stop_flag = 0;
 
-uint8_t ip_buffer[AWE_MAX_PKT_LEN];
+uint32_t ip_buffer[AWE_PACKET_MAX_WORDS];
 uint8_t resp_buffer[RPMSG_PKT_LEN];
 int tun_ept_fd;
 sem_t awe_sem;
@@ -137,14 +138,31 @@ int main()
 	}
 
 	do {
-		int buflen = read(client_socket, ip_buffer, AWE_MAX_PKT_LEN);
+		int buflen;
+		uint32_t pkt_len;
+
+		buflen = read(client_socket, ip_buffer, AWE_MAX_PKT_LEN);
 		if (buflen <= 0 ) {
 			perror("failed to read data");
 			break;
 		}
-		
+
+		pkt_len = PACKET_LENGTH_WORDS(ip_buffer);
+		if (buflen < pkt_len) {
+			printf("Error: Failed to read complete AWE pakcet\n");
+			continue;
+		}
+
+#ifdef DEBUG_PRINT
+		printf("--> Info\n ----> No. of packets : %d\n", pkt_len);
+
+		for (int i = 0; i < pkt_len; i++)
+			printf("Packet %dth, %x ",i, ip_buffer[i]);
+		printf("\n");
+#endif
+
 		/* send data to remote core */
-		if (send_awe_pkts_fully(tun_ept_fd, ip_buffer, buflen) != 0)
+		if (send_awe_pkts_fully(tun_ept_fd, (uint8_t *)ip_buffer, buflen) != 0)
 		{
 			printf("Failed to send data\n");
 			break;
@@ -152,6 +170,15 @@ int main()
 
 		/* wait for response from the remote core */
 		sem_wait(&awe_sem);
+
+#ifdef DEBUG_PRINT
+		uint32_t *buf = (uint32_t *)&resp_buffer[0];
+		num_p = PACKET_LENGTH_WORDS(buf);
+		printf("Response received from DSP");
+		for (int i = 0; i < num_p; i++)
+			printf("%x ", buf[i]);
+		printf("\n");
+#endif
 
 		/* send response back to tcp server */
 		buflen = send_response(client_socket);
