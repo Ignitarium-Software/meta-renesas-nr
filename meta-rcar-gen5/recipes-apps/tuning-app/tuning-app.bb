@@ -3,7 +3,7 @@ LICENSE = "CLOSED"
 
 SRC_URI += "file://tuning_app.service file://remoteproc.service file://remoteproc_script.sh"
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 inherit systemd
 
@@ -11,12 +11,12 @@ inherit systemd
 do_install() {
     # Install script
      install -d ${D}${bindir}
-     install -m 0777 ${WORKDIR}/remoteproc_script.sh ${D}${bindir}/remoteproc_script
+     install -m 0777 ${S}/remoteproc_script.sh ${D}${bindir}/remoteproc_script
 
     # Install systemd service
     install -d ${D}${systemd_system_unitdir}
-    install -m 0644 ${WORKDIR}/tuning_app.service ${D}${systemd_system_unitdir}
-    install -m 0644 ${WORKDIR}/remoteproc.service ${D}${systemd_system_unitdir}
+    install -m 0644 ${S}/tuning_app.service ${D}${systemd_system_unitdir}
+    install -m 0644 ${S}/remoteproc.service ${D}${systemd_system_unitdir}
 }
 
 # Enable systemd service

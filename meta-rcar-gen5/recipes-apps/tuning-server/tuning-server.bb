@@ -12,7 +12,7 @@ SRC_URI = "file://src/main.c \
            file://CMakeLists.txt \
            file://LICENSE"
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 inherit cmake
 

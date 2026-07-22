@@ -5,7 +5,7 @@ LIC_FILES_CHKSUM = "file://main.c;md5=a829b94668a40268c87a265b6592fa00"
 
 SRC_URI = "file://main.c"
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 DEPENDS = "alsa-lib"
 
