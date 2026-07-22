@@ -6,7 +6,7 @@ RENESAS_BSP_BRANCH = "${@oe.utils.conditional("MACHINE", "x5h", \
     "rebase/v4.36.0", d)}"
 RENESAS_BSP_SRCREV = "${@oe.utils.conditional("MACHINE", "x5h", \
     "b88700836be3c18ee4f8b30d18e18150571c317d", \
-    "e99ac4c4325492ebc09df53a4829ce3ba0fd1963", d)}"
+    "5c161319279e21f777fc310e41554aa28ce17d6f", d)}"
 
 # Renesas Yocto BSP version
 BSP_RENESAS_VERSION = "Renesas-Yocto-v7.26.0"
