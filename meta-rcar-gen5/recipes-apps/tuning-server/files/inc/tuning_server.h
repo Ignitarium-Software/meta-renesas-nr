@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define AWE_PACKET_MAX_WORDS    264u
+#define AWE_PACKET_MAX_WORDS    512u
 #define AWE_MAX_PKT_LEN    (AWE_PACKET_MAX_WORDS * 4u) /* 1056 B */
 
 /* maximum rpmessage pkt len that can be transmitted in a single instance.
@@ -73,5 +73,21 @@ bool aggregate_awe_pkts(uint8_t *buf, uint32_t len);
  * @return Negative error code if transmission fails.
  */
 int send_response(int client_fd);
+
+/**
+ * @brief reset socket connection
+ */
+int reset_tuning_socket(int client_socket, int sockfd);
+
+/**
+ * @brief initialize tcp server
+ */
+int init_tcp_server(int *server_fd);
+
+/**
+ * @brief fetch rpmsg endpoint info
+ */
+int get_endpoint_info(int *src_addr, int *dst_addr);
+
 
 #endif /* __AWE_SERVER_H__  */
