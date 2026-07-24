@@ -2,7 +2,7 @@
 
 #Flash DSP application
 
-modprobe rcar-dsp-rproc.ko
+insmod /lib/modules/rcar-dsp-rproc.ko
 
 echo VpxAweRuntime.elf > /sys/class/remoteproc/remoteproc1/firmware
 echo start > /sys/class/remoteproc/remoteproc1/state
