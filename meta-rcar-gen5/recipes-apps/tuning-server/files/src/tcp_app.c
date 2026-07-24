@@ -4,8 +4,33 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
 
-#define PORT 15004
+#define AWE_TUNING_PORT 15004
+
+int reset_tuning_socket(int client_socket, int sockfd)
+{
+    int newsockfd;
+    socklen_t clilen;
+    struct sockaddr_in cli_addr;
+    shutdown(client_socket, SHUT_RDWR);
+    close(client_socket);
+
+    listen(sockfd, 3);
+    printf("Listening again for connection on port %d\n", AWE_TUNING_PORT);
+    clilen = sizeof(cli_addr);
+    newsockfd = accept(sockfd,
+                 (struct sockaddr *) &cli_addr,
+                 &clilen);
+
+    if (newsockfd < 0)
+    {
+        printf("ERROR on accept, %d\n", newsockfd);
+        return -1;
+    }
+    printf( "Found connection again!\n");
+    return newsockfd;
+}
 
 int init_tcp_server(int *server_fd)
 {
@@ -29,7 +54,7 @@ int init_tcp_server(int *server_fd)
     }
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
+    address.sin_port = htons(AWE_TUNING_PORT);
 
     /* Forcefully attaching socket to the port */
     if (bind(*server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {

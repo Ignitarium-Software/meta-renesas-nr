@@ -9,9 +9,11 @@
 #include <semaphore.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <errno.h>
 #include "tuning_server.h"
 
 #define CTRL_DEV "/dev/rpmsg_ctrl0"
+/* tuning endpoint service name */
 #define RPMSG_SERVICE_NAME "tuning_ep"
 
 static volatile sig_atomic_t stop_flag = 0;
@@ -20,9 +22,6 @@ uint32_t ip_buffer[AWE_PACKET_MAX_WORDS];
 uint8_t resp_buffer[RPMSG_PKT_LEN];
 int tun_ept_fd;
 sem_t awe_sem;
-
-int init_tcp_server(int *server_fd);
-int get_endpoint_info(int *src_addr, int *dst_addr);
 
 static void sig_handler(int signo)
 {
@@ -34,7 +33,7 @@ static void sig_handler(int signo)
  * @brief Receive the incoming rp message data from the R core
  * and signal the semaphore
  */
-void* awe_resp_thread(void* arg)
+static void* awe_resp_thread(void* arg)
 {
 	while (stop_flag == 0) {
 		do {
@@ -97,7 +96,7 @@ int main()
 	/* open control endpoint */
 	ctrl_fd = open(CTRL_DEV, O_RDWR);
 	if (ctrl_fd < 0) {
-		perror("open ctrl device");
+		printf("Failed to open rpmsg control node %d\n", errno);
 		return -1;
 	}
 
@@ -114,7 +113,7 @@ int main()
 
 	ret = ioctl(ctrl_fd, RPMSG_CREATE_EPT_IOCTL, &eptinfo);
 	if (ret < 0) {
-		perror("ioctl create endpoint");
+		printf("ioctl endpoint creation failed %d\n", errno);
 		close(ctrl_fd);
 		return -1;
 	}
@@ -125,7 +124,7 @@ int main()
 
 	tun_ept_fd = open(dev_name, O_RDWR);
 	if (tun_ept_fd < 0) {
-		perror("open endpoint device");
+		printf("rpmsg endpoint openeing failed %d", errno);
 		close(ctrl_fd);
 		return -1;
 	}
@@ -138,31 +137,47 @@ int main()
 	}
 
 	do {
-		int buflen;
+		int read_bytes;
 		uint32_t pkt_len;
 
-		buflen = read(client_socket, ip_buffer, AWE_MAX_PKT_LEN);
-		if (buflen <= 0 ) {
-			perror("failed to read data");
-			break;
+		read_bytes = read(client_socket, ip_buffer, AWE_MAX_PKT_LEN);
+		if (read_bytes <= 0 ) {
+			printf("ERROR: socket read error, attempt to reconnect --  ret = %d, errno = %d\n", read_bytes, errno);
+			client_socket = reset_tuning_socket(client_socket, server_fd);
+			if (client_socket < 0) {
+				printf("Invalid socket descriptor\n");
+				break;
+			}
+			continue;
 		}
 
-		pkt_len = PACKET_LENGTH_WORDS(ip_buffer);
-		if (buflen < pkt_len) {
-			printf("Error: Failed to read complete AWE pakcet\n");
+		pkt_len = PACKET_LENGTH_BYTES(ip_buffer);
+		while (read_bytes < pkt_len) {
+			printf("Didn't read the entire packet! readBytes = %d, totalPacketLength = %u\nReading again\n", read_bytes, pkt_len);
+			read_bytes += read(client_socket, &((char *)ip_buffer)[read_bytes], AWE_MAX_PKT_LEN);
+		}
+
+		if (read_bytes > pkt_len) {
+			printf("ERROR: read %d bytes, expected maximum is %u. Exiting.\n", read_bytes, pkt_len);
+			client_socket = reset_tuning_socket(client_socket, server_fd);
+			if (client_socket < 0) {
+				printf("Invalid socket descriptor\n");
+				break;
+			}
 			continue;
 		}
 
 #ifdef DEBUG_PRINT
-		printf("--> Info\n ----> No. of packets : %d\n", pkt_len);
+		uint32_t pkt_len_words = PACKET_LENGTH_WORDS(ip_buffer);
+		printf("No. of packets : %d\n", pkt_len_words);
 
-		for (int i = 0; i < pkt_len; i++)
+		for (int i = 0; i < pkt_len_words; i++)
 			printf("Packet %dth, %x ",i, ip_buffer[i]);
 		printf("\n");
 #endif
 
 		/* send data to remote core */
-		if (send_awe_pkts_fully(tun_ept_fd, (uint8_t *)ip_buffer, buflen) != 0)
+		if (send_awe_pkts_fully(tun_ept_fd, (uint8_t *)ip_buffer, read_bytes) != 0)
 		{
 			printf("Failed to send data\n");
 			break;
@@ -173,21 +188,34 @@ int main()
 
 #ifdef DEBUG_PRINT
 		uint32_t *buf = (uint32_t *)&resp_buffer[0];
-		num_p = PACKET_LENGTH_WORDS(buf);
+		pkt_len_words = PACKET_LENGTH_WORDS(buf);
 		printf("Response received from DSP");
-		for (int i = 0; i < num_p; i++)
+		for (int i = 0; i < pkt_len_words; i++)
 			printf("%x ", buf[i]);
 		printf("\n");
 #endif
 
 		/* send response back to tcp server */
-		buflen = send_response(client_socket);
-		if (buflen <= 0) {
-			perror("failed to send data to server");
-			break;
+		read_bytes = send_response(client_socket);
+		if (read_bytes <= 0) {
+			printf("failed to send data to client %d\n", errno);
+			client_socket = reset_tuning_socket(client_socket, server_fd);
+			if (client_socket < 0) {
+				printf("Invalid socket descriptor\n");
+				break;
+			}
+			continue;
 		}
 
 	} while (stop_flag == 0);
+
+	ret = ioctl(tun_ept_fd, RPMSG_DESTROY_EPT_IOCTL, &eptinfo);
+	if (ret < 0) {
+		printf("Failed to release rpmsg endpoint %d\n", errno);
+	}
+    else {
+        printf("Endpoint released\n");
+    }
 
 	/* Close all file descriptor */
 	close(tun_ept_fd);
