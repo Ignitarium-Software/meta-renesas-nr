@@ -25,7 +25,7 @@
 #define BUF_SIZE       (960U)
 #define PCM_WAIT_MS    (5U)
 
-#define CHUNK_SLOTS    (960U)//multiple of 960
+#define CHUNK_SLOTS    (960U)
 #define AUDIO_BUF_LEN  (CHUNK_SLOTS * 4U)   /* 3840 slots (~3.6MB) */
 
 /* debugfs nodes */
@@ -37,9 +37,7 @@
  *
  * PROFILE_START() takes the "before" timestamp, PROFILE_STOP() takes
  * the "after" timestamp and folds the elapsed time into running
- * min/max/avg stats. Kept as macros (rather than a helper function)
- * so they can be dropped inline in each thread's loop without the
- * overhead/awkwardness of passing every stat variable by pointer.
+ * min/max/avg stats.
  *
  * The calling function must have these locals in scope:
  *   struct timespec start, end;
@@ -52,19 +50,18 @@
 	clock_gettime(CLOCK_MONOTONIC, &start)
 
 #define PROFILE_STOP()                                                 \
-	do {                                                            \
-		/* time profiling */                                    \
-		clock_gettime(CLOCK_MONOTONIC, &end);                   \
-		time_us = (end.tv_sec - start.tv_sec) * 1000000 +       \
-			(end.tv_nsec - start.tv_nsec) / 1000;           \
-									 \
-		if ((time_us < tmin_us) || (!tmin_us))                  \
-			tmin_us = time_us;                              \
-									 \
-		if (time_us > tmax_us)                                  \
-			tmax_us = time_us;                              \
-									 \
-		tavg_us = tavg_us + ((time_us - tavg_us) / count);      \
+	do {                                                               \
+		clock_gettime(CLOCK_MONOTONIC, &end);                          \
+		time_us = (end.tv_sec - start.tv_sec) * 1000000 +              \
+		(end.tv_nsec - start.tv_nsec) / 1000;                          \
+		                                                               \
+		if ((time_us < tmin_us) || (!tmin_us))                         \
+		tmin_us = time_us;                                             \
+		                                                               \
+		if (time_us > tmax_us)                                         \
+		tmax_us = time_us;                                             \
+		                                                               \
+		tavg_us = tavg_us + ((time_us - tavg_us) / count);             \
 	} while (0)
 
 /* wav file header */
@@ -95,12 +92,7 @@ typedef struct __attribute__((packed)) {
 } fmt_chunk_t;
 
 /*
- * Full WAV header capture writes for its own output file, built from
- * the actual capture format (SAMPLE_RATE/CHANNELS/16-bit) rather than
- * copied from any input file - capture has no input file at all.
- * data_hdr.size (and riff.size) are written as 0 placeholders up
- * front, since the total byte count isn't known until capture stops
- * (it runs until SIGINT), then patched via patch_wav_header().
+ * Full WAV header capture writes for its own output file.
  */
 typedef struct __attribute__((packed)) {
 	riff_header_t   riff;
@@ -111,9 +103,9 @@ typedef struct __attribute__((packed)) {
 
 /*
  * Build and write a WAV header for capture's own output file, using
- * the actual capture format - not copied from any input file, since
- * capture has none. data/riff sizes are written as 0 placeholders
- * (the real total isn't known until capture stops); patch_wav_header()
+ * the actual capture format.
+ * data/riff sizes are written as 0 placeholders
+ * (the real total isn't known until capture stops). patch_wav_header()
  * fixes them up afterward.
  */
 static int write_wav_header(FILE *fout, uint32_t sample_rate,
@@ -153,8 +145,8 @@ static int write_wav_header(FILE *fout, uint32_t sample_rate,
 }
 
 /*
- * Patch the RIFF and data chunk sizes now that the real byte count is
- * known. Called once capture has stopped and the final total in
+ * Patch the RIFF and data chunk sizes.
+ * Called once capture has stopped and the final total in
  * priv->out_bytes is final.
  */
 static int patch_wav_header(FILE *fout, uint32_t data_bytes)
@@ -195,15 +187,12 @@ typedef struct {
 	FILE            *fin;
 	FILE            *fout;
 	uint32_t        remaining;
-	uint32_t        out_bytes;  /* capture: total bytes written to fout,
-					used to patch the WAV header once
-					capture stops (size isn't known
-					up front - runs until SIGINT) */
+	uint32_t        out_bytes;  /* capture: total bytes written to fout */
 	snd_pcm_t       *pcm;
 	int             dbgfs_fd;
 	pthread_mutex_t lock;
 	bool            terminate;
-	uint32_t        file_read_count;
+	uint32_t        file_read_count; /* playback: i/p file read iterations */
 	sem_t           start_pcm;  /* playback: chunk-ready signal, file->ring */
 	sem_t           start_out;  /* capture:  chunk-ready signal, ring->file
 					playback: one-shot gate for debugfs output thread */
@@ -311,55 +300,55 @@ static buf_io_status_t read_buf_to_file(file_rd_buf_t *buf, FILE *fout, size_t s
 }
 static buf_io_status_t read_buf_to_file_chunk(file_rd_buf_t *buf,FILE *fout,size_t size)
 {
-    uint32_t slots;
-    uint32_t available;
-    uint32_t first_slots;
-    uint32_t second_slots;
+	uint32_t slots;
+	uint32_t available;
+	uint32_t first_slots;
+	uint32_t second_slots;
 
-    /* number of ring-buffer entries to consume */
-    slots = size / FRAME_BYTES;
+	/* number of ring-buffer entries to consume */
+	slots = size / FRAME_BYTES;
 
-    /* determine available entries */
-    if (buf->wr_id >= buf->rd_id)
-        available = buf->wr_id - buf->rd_id;
-    else
-        available = AUDIO_BUF_LEN - buf->rd_id + buf->wr_id;
+	/* determine available entries */
+	if (buf->wr_id >= buf->rd_id)
+		available = buf->wr_id - buf->rd_id;
+	else
+		available = AUDIO_BUF_LEN - buf->rd_id + buf->wr_id;
 
-    /* not enough data available */
-    if (available < slots)
-        return BUF_IO_XRUN;
+	/* not enough data available */
+	if (available < slots)
+		return BUF_IO_XRUN;
 
-    /* contiguous entries before wrap */
-    first_slots = AUDIO_BUF_LEN - buf->rd_id;
-    if (first_slots > slots)
-        first_slots = slots;
+	/* contiguous entries before wrap */
+	first_slots = AUDIO_BUF_LEN - buf->rd_id;
+	if (first_slots > slots)
+		first_slots = slots;
 
-    /* write first contiguous block */
-    if (fwrite(&buf->buffer[buf->rd_id][0],
-               FRAME_BYTES,
-               first_slots,
-               fout) != first_slots) {
-        printf("Failed to write out data\n");
-        return BUF_IO_ERR;
-    }
+	/* write first contiguous block */
+	if (fwrite(&buf->buffer[buf->rd_id][0],
+				FRAME_BYTES,
+				first_slots,
+				fout) != first_slots) {
+		printf("Failed to write out data\n");
+		return BUF_IO_ERR;
+	}
 
-    /* write wrapped portion if needed */
-    second_slots = slots - first_slots;
+	/* write wrapped portion if needed */
+	second_slots = slots - first_slots;
 
-    if (second_slots) {
-        if (fwrite(&buf->buffer[0][0],
-                   FRAME_BYTES,
-                   second_slots,
-                   fout) != second_slots) {
-            printf("Failed to write out data\n");
-            return BUF_IO_ERR;
-        }
-    }
+	if (second_slots) {
+		if (fwrite(&buf->buffer[0][0],
+					FRAME_BYTES,
+					second_slots,
+					fout) != second_slots) {
+			printf("Failed to write out data\n");
+			return BUF_IO_ERR;
+		}
+	}
 
-    /* consume all slots written */
-    buf->rd_id = (buf->rd_id + slots) % AUDIO_BUF_LEN;
+	/* consume all slots written */
+	buf->rd_id = (buf->rd_id + slots) % AUDIO_BUF_LEN;
 
-    return BUF_IO_OK;
+	return BUF_IO_OK;
 }
 
 /* input file read thread for playback test */
@@ -396,36 +385,36 @@ static void *playback_input_thread(void *arg)
 
 		/* read data from file, and write it into circular buffer */
 		switch (write_buf_from_file(&priv->buf, priv->fin, this_block)) {
-		case BUF_IO_XRUN:
-			/*
-			 * Ring buffer full: wr_id would collide with rd_id.
-			 * playback_pcm_thread isn't draining fast enough.
-			 * Count this as one overrun episode (edge-triggered,
-			 * not once per retry) and keep retrying: unlike
-			 * capture, there's no hardware clock forcing us
-			 * forward, so waiting for space is correct here
-			 * rather than dropping audio data.
-			 */
-			if (!in_overrun) {
-				in_overrun = true;
-				sw_overrun++;
-			}
-			usleep(100);
-			continue;
-		case BUF_IO_ERR:
-			/*
-			 * Fatal: real file read error, not a buffer
-			 * condition. Retrying would just spin forever
-			 * since the read isn't going to fix itself, so
-			 * stop this thread instead of miscounting it as
-			 * an overrun.
-			 */
-			printf("ERROR: playback input file read failed,"
-					" stopping (count: %u)\n", count);
-			goto out;
-		case BUF_IO_OK:
-		default:
-			break;
+			case BUF_IO_XRUN:
+				/*
+				 * Ring buffer full: wr_id would collide with rd_id.
+				 * playback_pcm_thread isn't draining fast enough.
+				 * Count this as one overrun episode (edge-triggered,
+				 * not once per retry) and keep retrying: unlike
+				 * capture, there's no hardware clock forcing us
+				 * forward, so waiting for space is correct here
+				 * rather than dropping audio data.
+				 */
+				if (!in_overrun) {
+					in_overrun = true;
+					sw_overrun++;
+				}
+				usleep(100);
+				continue;
+			case BUF_IO_ERR:
+				/*
+				 * Fatal: real file read error, not a buffer
+				 * condition. Retrying would just spin forever
+				 * since the read isn't going to fix itself, so
+				 * stop this thread instead of miscounting it as
+				 * an overrun.
+				 */
+				printf("ERROR: playback input file read failed,"
+						" stopping (count: %u)\n", count);
+				goto out;
+			case BUF_IO_OK:
+			default:
+				break;
 		}
 
 		in_overrun = false;
@@ -460,10 +449,6 @@ out:
 			" avg time: %ld us, total count: %d, ring buffer"
 			" overruns: %u\n",
 			__func__, tmax_us, tmin_us, tavg_us, count, sw_overrun);
-
-	//pthread_mutex_lock(&priv->lock);
-	//priv->terminate = true;
-	//pthread_mutex_unlock(&priv->lock);
 
 	return NULL;
 }
@@ -793,13 +778,13 @@ cleanup:
 }
 
 /*
- * PCM capture thread ("capture_playback_thread"): reads live audio from
- * the ALSA capture (mic) interface via mmap and pushes it into the ring
- * buffer. No input.wav is used for capture - this thread is the sole
+ * PCM capture thread : reads live audio from
+ * the ALSA capture interface via mmap and pushes it into the ring
+ * buffer. This thread is the sole
  * producer, driven purely by the sound interface, and runs until the
  * user stops the app (Ctrl+C / SIGINT) or an ALSA error occurs.
  */
-static void *capture_playback_thread(void *arg)
+static void *pcm_capture_thread(void *arg)
 {
 	test_priv_t *priv = (test_priv_t *)arg;
 	snd_pcm_t *pcm = priv->pcm;
@@ -952,8 +937,8 @@ static void *capture_playback_thread(void *arg)
 
 /*
  * Output file write thread for capture test: consumes the ring buffer
- * filled by capture_playback_thread and writes it to the output WAV
- * file. Instead of busy-polling, it blocks on priv->start_out and wakes
+ * filled by pcm_capture_thread and writes it to the output WAV
+ * file. It blocks on priv->start_out and wakes
  * only when a ~900KB chunk (or the final partial chunk) is ready, then
  * drains that whole chunk in one batch. This is the "granular buffer"
  * signal: chunk fills -> signal -> consumer processes that chunk.
@@ -997,8 +982,7 @@ static void *capture_output_thread(void *arg)
 				 * A chunk was signalled but rd_id caught up
 				 * to wr_id already: producer isn't filling
 				 * fast enough. Count this as one underrun
-				 * episode (edge-triggered, not once per
-				 * retry) and keep running - the next signal
+				 * episode  and keep running - the next signal
 				 * will bring more data.
 				 */
 				if (!in_underrun) {
@@ -1010,9 +994,7 @@ static void *capture_output_thread(void *arg)
 				/*
 				 * Fatal: real file write error (disk full,
 				 * output closed, etc), not a buffer
-				 * condition. Don't miscount it as an
-				 * underrun and don't keep silently losing
-				 * captured audio to a broken output file -
+				 * condition.
 				 * stop the whole test.
 				 */
 				printf("ERROR: capture output file write"
@@ -1029,7 +1011,6 @@ static void *capture_output_thread(void *arg)
 		in_underrun = false;
 
 		count++;
-		//priv->out_bytes += FRAME_BYTES;
 		priv->out_bytes += FRAME_BYTES * CHUNK_SLOTS;
 
 		PROFILE_STOP();
@@ -1051,9 +1032,9 @@ next_chunk:
 }
 
 /*
- * Capture test: no input.wav is read or written to any debugfs node.
+ * Capture test:
  * Only two threads run:
- *   - capture_playback_thread : mic (ALSA) -> ring buffer
+ *   - pcm_capture_thread : ALSA -> ring buffer
  *   - capture_output_thread   : ring buffer -> output wav file
  * Runs continuously (long-run) until Ctrl+C (SIGINT).
  */
@@ -1121,8 +1102,8 @@ static int test_capture(FILE *fout)
 	/* Register signal handler */
 	signal(SIGINT, handle_sigint);
 
-	if (pthread_create(&cap_playback_t, NULL, capture_playback_thread, priv)) {
-		printf("pthread_create for capture_playback_thread failed\n");
+	if (pthread_create(&cap_playback_t, NULL, pcm_capture_thread, priv)) {
+		printf("pthread_create for pcm_capture_thread failed\n");
 		goto cleanup;
 	}
 
