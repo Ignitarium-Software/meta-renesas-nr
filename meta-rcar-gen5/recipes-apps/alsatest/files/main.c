@@ -35,25 +35,27 @@
 /*
  * Lightweight per-loop-iteration time profiling.
  *
+ * PROFILE_INIT() declare variables used for profiling.
+ *
  * PROFILE_START() takes the "before" timestamp, PROFILE_STOP() takes
  * the "after" timestamp and folds the elapsed time into running
  * min/max/avg stats.
  *
- * The calling function must have these locals in scope:
- *   struct timespec start, end;
- *   long            time_us;
- *   long            tmin_us, tmax_us, tavg_us;
- *   uint32_t        count;      (incremented before PROFILE_STOP()
- *                                 is called, since it divides by count)
+ * PROFILE_INFO() print profiling results.
+ *
  */
+#define PROFILE_INIT()                                                 \
+	long tmin_us = 0, tmax_us = 0, tavg_us = 0;                        \
+	struct timespec start, end
+
 #define PROFILE_START()                                                \
 	clock_gettime(CLOCK_MONOTONIC, &start)
 
-#define PROFILE_STOP()                                                 \
+#define PROFILE_STOP()                                            \
 	do {                                                               \
 		clock_gettime(CLOCK_MONOTONIC, &end);                          \
-		time_us = (end.tv_sec - start.tv_sec) * 1000000 +              \
-		(end.tv_nsec - start.tv_nsec) / 1000;                          \
+		long time_us = (end.tv_sec - start.tv_sec) * 1000000 +         \
+			(end.tv_nsec - start.tv_nsec) / 1000;                      \
 		                                                               \
 		if ((time_us < tmin_us) || (!tmin_us))                         \
 		tmin_us = time_us;                                             \
@@ -63,6 +65,10 @@
 		                                                               \
 		tavg_us = tavg_us + ((time_us - tavg_us) / count);             \
 	} while (0)
+
+#define PROFILE_INFO()                                                 \
+	printf("%s: time taken max(%ld us), min(%ld us), avg(%ld us)\n",   \
+			__func__, tmax_us, tmin_us, tavg_us)
 
 /* wav file header */
 typedef struct {
@@ -361,14 +367,12 @@ static void *playback_input_thread(void *arg)
 	bool in_overrun = false;
 	uint32_t count = 0;
 	uint32_t sw_overrun = 0;   /* ring buffer full events (producer outran consumer) */
-	long tmin_us = 0, tmax_us = 0, tavg_us = 0;
+	PROFILE_INIT();
 
 	printf("Start %s\n", __func__);
 
 	/* check for remaining data from input file */
 	while (remaining > 0) {
-		struct timespec start, end;
-		long time_us;
 		size_t this_block;
 
 		PROFILE_START();
@@ -445,10 +449,9 @@ out:
 	if (!prebuffered)
 		sem_post(&priv->start_pcm);
 
-	printf("Exit from %s: max time: %ld us, min time: %ld us,"
-			" avg time: %ld us, total count: %d, ring buffer"
-			" overruns: %u\n",
-			__func__, tmax_us, tmin_us, tavg_us, count, sw_overrun);
+	PROFILE_INFO();
+	printf("Exit from %s: total count: %d, ring buffer overruns: %u\n",
+			__func__, count, sw_overrun);
 
 	return NULL;
 }
@@ -465,8 +468,8 @@ static void *playback_pcm_thread(void *arg)
 	uint32_t count = 0;
 	uint32_t sw_underrun = 0; /* ring buffer empty events (consumer outran producer) */
 	snd_pcm_uframes_t offset, mmap_frames = FRAME_SIZE;
-	long tmin_us = 0, tmax_us = 0, tavg_us = 0;
 	uint32_t file_read_count;
+	PROFILE_INIT();
 
 	/* wait until playback_input_thread has prebuffered one full chunk */
 	sem_wait(&priv->start_pcm);
@@ -480,8 +483,6 @@ static void *playback_pcm_thread(void *arg)
 		const snd_pcm_channel_area_t *areas;
 		snd_pcm_sframes_t avail;
 		int err;
-		struct timespec start, end;
-		long time_us;
 		bool ret;
 
 		PROFILE_START();
@@ -590,11 +591,9 @@ static void *playback_pcm_thread(void *arg)
 		}
 	}
 
-	printf("Exit from %s: max time: %ld us, min time: %ld us,"
-			" avg time: %ld us, total count: %d, ring buffer"
-			" underruns: %u\n",
-			__func__, tmax_us, tmin_us, tavg_us, count,
-			sw_underrun);
+	PROFILE_INFO();
+	printf("Exit from %s: total count: %d, ring buffer underruns: %u\n",
+			__func__, count, sw_underrun);
 
 	pthread_mutex_lock(&priv->lock);
 	priv->terminate = true;
@@ -609,15 +608,13 @@ static void *playback_output_thread(void *arg)
 	test_priv_t *priv = (test_priv_t *)arg;
 	bool terminate = false;
 	uint32_t count = 0;
-	long tmin_us = 0, tmax_us = 0, tavg_us = 0;
 	char *audio_data = malloc(FRAME_BYTES);
+	PROFILE_INIT();
 
 	sem_wait(&priv->start_out);
 	printf("Start %s\n", __func__);
 
 	while (true) {
-		struct timespec start, end;
-		long time_us;
 		ssize_t rc;
 
 		PROFILE_START();
@@ -647,9 +644,8 @@ static void *playback_output_thread(void *arg)
 		PROFILE_STOP();
 	}
 
-	printf("Exit from %s: max time: %ld us, min time: %ld us,"
-			" avg time: %ld us, total count: %d\n",
-			__func__, tmax_us, tmin_us, tavg_us, count);
+	PROFILE_INFO();
+	printf("Exit from %s: total count: %d\n", __func__, count);
 
 	pthread_mutex_lock(&priv->lock);
 	priv->terminate = true;
@@ -797,7 +793,7 @@ static void *pcm_capture_thread(void *arg)
 	uint32_t chunk_count = 0;
 	uint32_t sw_overrun = 0; /* ring buffer full events (consumer outran producer) */
 	snd_pcm_uframes_t offset, mmap_frames = FRAME_SIZE;
-	long tmin_us = 0, tmax_us = 0, tavg_us = 0;
+	PROFILE_INIT();
 
 	printf("Start %s\n", __func__);
 
@@ -805,8 +801,6 @@ static void *pcm_capture_thread(void *arg)
 		const snd_pcm_channel_area_t *areas;
 		snd_pcm_sframes_t avail;
 		int err;
-		struct timespec start, end;
-		long time_us;
 		bool ret;
 
 		PROFILE_START();
@@ -922,11 +916,9 @@ static void *pcm_capture_thread(void *arg)
 	if (!prebuffered || chunk_count > 0)
 		sem_post(&priv->start_out);
 
-	printf("Exit from %s: max time: %ld us, min time: %ld us,"
-			" avg time: %ld us, total count: %d, ring buffer"
-			" overruns: %u\n",
-			__func__, tmax_us, tmin_us, tavg_us, count,
-			sw_overrun);
+	PROFILE_INFO();
+	printf("Exit from %s: total count: %d, ring buffer overruns: %u\n",
+			__func__, count, sw_overrun);
 
 	pthread_mutex_lock(&priv->lock);
 	priv->terminate = true;
@@ -950,7 +942,7 @@ static void *capture_output_thread(void *arg)
 	bool in_underrun = false;
 	uint32_t count = 0;
 	uint32_t sw_underrun = 0; /* buffer empty when a chunk was signalled */
-	long tmin_us = 0, tmax_us = 0, tavg_us = 0;
+	PROFILE_INIT();
 
 	printf("Start %s\n", __func__);
 
@@ -963,9 +955,6 @@ static void *capture_output_thread(void *arg)
 
 		/* block here until a chunk is ready (or thread is told to exit) */
 		sem_wait(&priv->start_out);
-
-		struct timespec start, end;
-		long time_us;
 
 		pthread_mutex_lock(&priv->lock);
 		terminate = priv->terminate;
@@ -1019,10 +1008,9 @@ next_chunk:
 		break;
 	}
 
-	printf("Exit from %s: max time: %ld us, min time: %ld us,"
-			" avg time: %ld us, total count: %d, ring buffer"
-			" underruns: %u\n",
-			__func__, tmax_us, tmin_us, tavg_us, count, sw_underrun);
+	PROFILE_INFO();
+	printf("Exit from %s: total count: %d, ring buffer underruns: %u\n",
+			__func__, count, sw_underrun);
 
 	pthread_mutex_lock(&priv->lock);
 	priv->terminate = true;
