@@ -1,11 +1,11 @@
 SUMMARY = "ALSA test App"
 DESCRIPTION = "ALSA test Application"
 LICENSE = "MIT"
-LIC_FILES_CHKSUM = "file://main.c;md5=a829b94668a40268c87a265b6592fa00"
+LIC_FILES_CHKSUM = "file://main.c;md5=f784ee85f97d7ebbbac33a6ec0adee39"
 
 SRC_URI = "file://main.c"
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 DEPENDS = "alsa-lib"
 
