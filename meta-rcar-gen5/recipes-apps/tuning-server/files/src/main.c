@@ -177,9 +177,9 @@ int main()
 #endif
 
 		/* send data to remote core */
-		if (send_awe_pkts_fully(tun_ept_fd, (uint8_t *)ip_buffer, read_bytes) != 0)
-		{
-			printf("Failed to send data\n");
+		ret = send_awe_pkts_fully(tun_ept_fd, (uint8_t *)ip_buffer, read_bytes);
+		if (ret != 0) {
+			printf("Failed to send data to DSP core, %d\n", ret);
 			break;
 		}
 

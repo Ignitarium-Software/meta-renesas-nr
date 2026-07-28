@@ -45,6 +45,7 @@ int send_awe_pkts_fully(int rpmsg_fd, uint8_t *buffer, int len)
 	while (offset < len) {
 
 		int chunk_size = (len - offset > RPMSG_DATA_CHUNK_LEN) ? RPMSG_DATA_CHUNK_LEN : (len - offset);
+		int retries = 3;
 
 		/* insert rp message packet header */
 		DspBridgeHdr rp_hdr;
@@ -65,20 +66,33 @@ int send_awe_pkts_fully(int rpmsg_fd, uint8_t *buffer, int len)
 
 #ifdef DEBUG_PRINT
 		printf("-------------Chunk size : %d, offset : %d\n", chunk_size, offset);
-		for(int i = 0; i < chunk_size; i++) {
-			printf("%x ", buffer[i]);
-		}
-		printf("\n **************************************\n");
 #endif
-		ret = write(rpmsg_fd, rp_packet, RPMSG_PKT_LEN);
-		if (ret < 0) {
-			perror("RPMsg write failed");
+		do {
+			/* delay for 10ms */
+			usleep(10000);
+
+			ret = write(rpmsg_fd, rp_packet, RPMSG_PKT_LEN);
+			if (ret <= 0) {
+				printf("rpmsg write failed, %d\n", ret);
+				printf("Retrying ...\n");
+			}
+			else
+			{
+				ret = 0;
+				break;
+			}
+
+		} while(retries-- && (ret < 0));
+
+		if (retries < 0) {
+			printf("rpmsg timeout occurred\n");
 			break;
 		}
+
 		offset += chunk_size;
 	}
 
-	return 0;
+	return ret;
 }
 
 bool aggregate_awe_pkts(uint8_t *buf, uint32_t len)
