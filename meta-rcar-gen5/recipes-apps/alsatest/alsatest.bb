@@ -1,7 +1,7 @@
 SUMMARY = "ALSA test App"
 DESCRIPTION = "ALSA test Application"
 LICENSE = "MIT"
-LIC_FILES_CHKSUM = "file://main.c;md5=a829b94668a40268c87a265b6592fa00"
+LIC_FILES_CHKSUM = "file://main.c;md5=b40f03b14ad10b2cf13a48f4d940d6c2"
 
 SRC_URI = "file://main.c"
 
