@@ -30,7 +30,7 @@ static void sig_handler(int signo)
 }
 
 /**
- * @brief Receive the incoming rp message data from the R core
+ * @brief Receive the incoming rp message data from the DSP core
  * and signal the semaphore
  */
 static void* awe_resp_thread(void* arg)
@@ -137,7 +137,7 @@ int main()
 	}
 
 	do {
-		int read_bytes;
+		int read_bytes = 0;
 		uint32_t pkt_len;
 
 		read_bytes = read(client_socket, ip_buffer, AWE_MAX_PKT_LEN);
@@ -152,6 +152,7 @@ int main()
 		}
 
 		pkt_len = PACKET_LENGTH_BYTES(ip_buffer);
+
 		while (read_bytes < pkt_len) {
 			printf("Didn't read the entire packet! readBytes = %d, totalPacketLength = %u\nReading again\n", read_bytes, pkt_len);
 			read_bytes += read(client_socket, &((char *)ip_buffer)[read_bytes], AWE_MAX_PKT_LEN);
@@ -177,9 +178,9 @@ int main()
 #endif
 
 		/* send data to remote core */
-		if (send_awe_pkts_fully(tun_ept_fd, (uint8_t *)ip_buffer, read_bytes) != 0)
-		{
-			printf("Failed to send data\n");
+		ret = send_awe_pkts_fully(tun_ept_fd, (uint8_t *)ip_buffer, read_bytes);
+		if (ret != 0) {
+			printf("Failed to send data to DSP core, %d\n", ret);
 			break;
 		}
 
