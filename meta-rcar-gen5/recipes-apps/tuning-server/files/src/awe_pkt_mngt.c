@@ -8,6 +8,8 @@
 #include <sys/socket.h>
 #include "tuning_server.h"
 
+#define MAX_RETRY_COUNT    (3)
+
 uint8_t rp_packet[RPMSG_PKT_LEN];
 uint8_t op_buffer[AWE_MAX_PKT_LEN];
 
@@ -45,7 +47,7 @@ int send_awe_pkts_fully(int rpmsg_fd, uint8_t *buffer, int len)
 	while (offset < len) {
 
 		int chunk_size = (len - offset > RPMSG_DATA_CHUNK_LEN) ? RPMSG_DATA_CHUNK_LEN : (len - offset);
-		int retries = 3;
+		int retries = MAX_RETRY_COUNT;
 
 		/* insert rp message packet header */
 		DspBridgeHdr rp_hdr;
@@ -82,7 +84,7 @@ int send_awe_pkts_fully(int rpmsg_fd, uint8_t *buffer, int len)
 				break;
 			}
 
-		} while(retries-- && (ret < 0));
+		} while((retries-- && (ret < 0)));
 
 		if (retries < 0) {
 			printf("rpmsg timeout occurred\n");
