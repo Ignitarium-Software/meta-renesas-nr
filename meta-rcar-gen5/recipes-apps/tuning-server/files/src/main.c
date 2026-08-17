@@ -96,7 +96,6 @@ int main()
 
 	if (get_endpoint_info(&ep_src, &ep_dst, &virtio_id) != 0) {
 		printf("Failed to get endpoint info\n");
-		close(ctrl_fd);
 		return -1;
 	}
 
