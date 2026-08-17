@@ -4,9 +4,9 @@
 #include <dirent.h>
 
 #define RPMSG_SYSFS_PATH "/sys/bus/rpmsg/devices/"
-#define RPMSG_EP_SERVICE "virtio0.tuning_ep"
+#define MAX_VIRTIO_BUS 2
 
-int get_endpoint_info(int *dst_src, int *dst_addr)
+int get_endpoint_info(int *dst_src, int *dst_addr, int *virtio_id)
 {
 	DIR *dp;
 	struct dirent *entry;
@@ -25,86 +25,95 @@ int get_endpoint_info(int *dst_src, int *dst_addr)
 
 	while ((entry = readdir(dp)) != NULL) {
 
-		if (strncmp(entry->d_name, RPMSG_EP_SERVICE, strlen(RPMSG_EP_SERVICE)) == 0) {
+		for (int virtio_no = 0; virtio_no < MAX_VIRTIO_BUS; virtio_no++) {
 
-			/* Build full device path */
-			snprintf(device_path, sizeof(device_path),
-					 "%s%s", RPMSG_SYSFS_PATH, entry->d_name);
+			char virtio_ep_service_path[64];
 
-			/* Build dst file path */
-			snprintf(dst_path, sizeof(dst_path),
-					 "%s/dst", device_path);
+			snprintf(virtio_ep_service_path, sizeof(virtio_ep_service_path),
+					"%s%d%s","virtio", virtio_no, ".tuning_ep");
 
-			printf("Opening: %s\n", dst_path);
+			if (strncmp(entry->d_name, virtio_ep_service_path, strlen(virtio_ep_service_path)) == 0) {
 
-			fp = fopen(dst_path, "r");
-			if (!fp) {
-				perror("fopen failed");
-				closedir(dp);
-				return 1;
-			}
+				/* Build full device path */
+				snprintf(device_path, sizeof(device_path),
+						"%s%s", RPMSG_SYSFS_PATH, entry->d_name);
 
-			if (fgets(buffer, sizeof(buffer), fp) == NULL) {
-				perror("fgets failed");
+				/* Build dst file path */
+				snprintf(dst_path, sizeof(dst_path),
+						"%s/dst", device_path);
+
+				printf("Opening: %s\n", dst_path);
+
+				fp = fopen(dst_path, "r");
+				if (!fp) {
+					perror("fopen failed");
+					closedir(dp);
+					return 1;
+				}
+
+				if (fgets(buffer, sizeof(buffer), fp) == NULL) {
+					perror("fgets failed");
+					fclose(fp);
+					closedir(dp);
+					return 1;
+				}
+
 				fclose(fp);
-				closedir(dp);
-				return 1;
-			}
 
-			fclose(fp);
+				/* Remove newline if present */
+				buffer[strcspn(buffer, "\n")] = 0;
 
-			/* Remove newline if present */
-			buffer[strcspn(buffer, "\n")] = 0;
+				/* Convert to integer safely */
+				char *endptr;
+				long dst_value = strtol(buffer, &endptr, 0);
 
-			/* Convert to integer safely */
-			char *endptr;
-			long dst_value = strtol(buffer, &endptr, 0);
+				if (endptr == buffer) {
+					printf("Invalid number in dst: %s\n", buffer);
+					closedir(dp);
+					return 1;
+				}
 
-			if (endptr == buffer) {
-				printf("Invalid number in dst: %s\n", buffer);
-				closedir(dp);
-				return 1;
-			}
+				*dst_addr = dst_value;
 
-			*dst_addr = dst_value;
+				/* Build src file path */
+				snprintf(dst_path, sizeof(dst_path),
+						"%s/src", device_path);
 
-			/* Build src file path */
-			snprintf(dst_path, sizeof(dst_path),
-					 "%s/src", device_path);
+				printf("Opening: %s\n", dst_path);
+				fp = fopen(dst_path, "r");
+				if (!fp) {
+					perror("fopen failed");
+					closedir(dp);
+					return 1;
+				}
 
-			printf("Opening: %s\n", dst_path);
-			fp = fopen(dst_path, "r");
-			if (!fp) {
-				perror("fopen failed");
-				closedir(dp);
-				return 1;
-			}
+				if (fgets(buffer, sizeof(buffer), fp) == NULL) {
+					perror("fgets failed");
+					fclose(fp);
+					closedir(dp);
+					return 1;
+				}
 
-			if (fgets(buffer, sizeof(buffer), fp) == NULL) {
-				perror("fgets failed");
 				fclose(fp);
+
+				/* Remove newline if present */
+				buffer[strcspn(buffer, "\n")] = 0;
+
+				/* Convert to integer safely */
+				dst_value = strtol(buffer, &endptr, 0);
+
+				if (endptr == buffer) {
+					printf("Invalid number in src: %s\n", buffer);
+					closedir(dp);
+					return 1;
+				}
+
+				*dst_src = dst_value;
+
+				*virtio_id = virtio_no;
 				closedir(dp);
-				return 1;
+				return 0;
 			}
-
-			fclose(fp);
-
-			/* Remove newline if present */
-			buffer[strcspn(buffer, "\n")] = 0;
-
-			/* Convert to integer safely */
-			dst_value = strtol(buffer, &endptr, 0);
-
-			if (endptr == buffer) {
-				printf("Invalid number in src: %s\n", buffer);
-				closedir(dp);
-				return 1;
-			}
-
-			*dst_src = dst_value;
-
-			closedir(dp);
-			return 0;
 		}
 	}
 

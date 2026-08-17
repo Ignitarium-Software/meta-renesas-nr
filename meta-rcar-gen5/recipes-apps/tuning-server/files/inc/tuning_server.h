@@ -87,7 +87,6 @@ int init_tcp_server(int *server_fd);
 /**
  * @brief fetch rpmsg endpoint info
  */
-int get_endpoint_info(int *src_addr, int *dst_addr);
-
+int get_endpoint_info(int *dst_src, int *dst_addr, int *virtio_id);
 
 #endif /* __AWE_SERVER_H__  */

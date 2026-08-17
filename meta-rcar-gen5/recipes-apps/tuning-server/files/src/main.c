@@ -12,7 +12,6 @@
 #include <errno.h>
 #include "tuning_server.h"
 
-#define CTRL_DEV "/dev/rpmsg_ctrl0"
 /* tuning endpoint service name */
 #define RPMSG_SERVICE_NAME "tuning_ep"
 
@@ -63,6 +62,8 @@ int main()
 	struct rpmsg_endpoint_info eptinfo;
 	char dev_name[32];
 	int ret, ep_src, ep_dst, client_socket, ctrl_fd, server_fd;
+	int virtio_id;
+	char ctrl_device[128];
 	pthread_t awe_resp_tid;
 
 	/* initialize semaphore */
@@ -93,16 +94,20 @@ int main()
 		return -1;
 	}
 
-	/* open control endpoint */
-	ctrl_fd = open(CTRL_DEV, O_RDWR);
-	if (ctrl_fd < 0) {
-		printf("Failed to open rpmsg control node %d\n", errno);
+	if (get_endpoint_info(&ep_src, &ep_dst, &virtio_id) != 0) {
+		printf("Failed to get endpoint info\n");
+		close(ctrl_fd);
 		return -1;
 	}
 
-	if (get_endpoint_info(&ep_src, &ep_dst) != 0) {
-		printf("Failed to get endpoint info\n");
-		close(ctrl_fd);
+	snprintf(ctrl_device, sizeof(ctrl_device), "%s%d","/dev/rpmsg_ctrl", virtio_id);
+
+	printf("Control Endpoint: %s\n", ctrl_device);
+
+	/* open control endpoint */
+	ctrl_fd = open(ctrl_device, O_RDWR);
+	if (ctrl_fd < 0) {
+		printf("Failed to open rpmsg control node %d\n", errno);
 		return -1;
 	}
 
